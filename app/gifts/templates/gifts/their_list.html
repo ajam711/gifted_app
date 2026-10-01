@@ -1,0 +1,26 @@
+{% extends "gifts/base.html" %}
+{% block title %}{{ partner.name }}'s list · Gifts{% endblock %}
+{% block content %}
+  <p class="crumb"><a href="{% url 'home' %}">Home</a></p>
+  <div class="heading-row">
+    <h1>{{ partner.name }}'s list</h1>
+    <a class="button" href="{% url 'add_their_item' %}">Add item</a>
+  </div>
+  {% if items %}
+    <ul class="items">
+      {% for item in items %}
+        <li>
+          <article class="item">
+            <h2>{{ item.name }}</h2>
+            {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
+            {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
+            {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
+            {% if item.giver_note %}<p class="note">{{ item.giver_note }}</p>{% endif %}
+          </article>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">Nothing here yet.</p>
+  {% endif %}
+{% endblock %}

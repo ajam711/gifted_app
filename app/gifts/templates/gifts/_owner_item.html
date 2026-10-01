@@ -1,0 +1,19 @@
+<article class="item">
+  <h3>{{ item.name }}</h3>
+  {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
+  {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
+  {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
+  <form method="post" action="{% url 'react_item' item.id %}" class="react-actions"
+        hx-post="{% url 'react_item' item.id %}"
+        hx-target="main"
+        hx-select="main"
+        hx-swap="outerHTML">
+    {% csrf_token %}
+    {% if item.reaction != "liked" %}
+      <button type="submit" name="reaction" value="liked" class="button">Like</button>
+    {% endif %}
+    {% if item.reaction != "disliked" %}
+      <button type="submit" name="reaction" value="disliked" class="button button-quiet">Dislike</button>
+    {% endif %}
+  </form>
+</article>

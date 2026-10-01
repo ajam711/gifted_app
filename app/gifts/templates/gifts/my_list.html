@@ -1,0 +1,43 @@
+{% extends "gifts/base.html" %}
+{% block title %}Your list · Gifts{% endblock %}
+{% block content %}
+  <p class="crumb"><a href="{% url 'home' %}">Home</a></p>
+  <div class="heading-row">
+    <h1>Your list</h1>
+    <a class="button" href="{% url 'add_my_item' %}">Add item</a>
+  </div>
+  {% if pending or liked or disliked %}
+    {% if pending %}
+      <section class="item-group" aria-labelledby="pending-heading">
+        <h2 id="pending-heading" class="group-title">Needs a reaction</h2>
+        <ul class="items">
+          {% for item in pending %}
+            <li>{% include "gifts/_owner_item.html" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    {% if liked %}
+      <section class="item-group" aria-labelledby="liked-heading">
+        <h2 id="liked-heading" class="group-title">Liked</h2>
+        <ul class="items">
+          {% for item in liked %}
+            <li>{% include "gifts/_owner_item.html" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    {% if disliked %}
+      <section class="item-group" aria-labelledby="disliked-heading">
+        <h2 id="disliked-heading" class="group-title">Disliked</h2>
+        <ul class="items">
+          {% for item in disliked %}
+            <li>{% include "gifts/_owner_item.html" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+  {% else %}
+    <p class="empty">Nothing here yet.</p>
+  {% endif %}
+{% endblock %}

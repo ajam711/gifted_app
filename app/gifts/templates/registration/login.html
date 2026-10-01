@@ -1,0 +1,22 @@
+{% extends "gifts/base.html" %}
+{% block title %}Log in · Gifts{% endblock %}
+{% block content %}
+  <h1>Log in</h1>
+  <form method="post" class="add-item">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <p>
+      <label for="{{ form.username.id_for_label }}">Username</label>
+      {{ form.username }}
+      {{ form.username.errors }}
+    </p>
+    <p>
+      <label for="{{ form.password.id_for_label }}">Password</label>
+      {{ form.password }}
+      {{ form.password.errors }}
+    </p>
+    <p class="actions">
+      <button type="submit" class="button">Log in</button>
+    </p>
+  </form>
+{% endblock %}
