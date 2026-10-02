@@ -1,5 +1,10 @@
 from django import forms
 from django.contrib.auth.forms import AuthenticationForm
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
+
+_HTTPS_ONLY = URLValidator(schemes=["https"])
+_URL_ERROR = "Use a link that starts with https://"
 
 
 class LoginForm(AuthenticationForm):
@@ -64,6 +69,26 @@ class AddItemForm(forms.Form):
         if not name:
             raise forms.ValidationError("Name is required")
         return name
+
+    def clean_url(self) -> str:
+        """HTTPS only: the link lands in an ``href`` the other person clicks.
+
+        A bare ``example.com/coat`` gets ``https://`` in front. Any other
+        scheme (``http:``, ``javascript:``, ``data:``) is rejected.
+        """
+
+        url = (self.cleaned_data.get("url") or "").strip()
+        if not url:
+            return ""
+        if "://" not in url:
+            url = f"https://{url}"
+        if len(url) > 500:
+            raise forms.ValidationError("Link is too long")
+        try:
+            _HTTPS_ONLY(url)
+        except ValidationError:
+            raise forms.ValidationError(_URL_ERROR) from None
+        return url
 
     def _optional(self, key: str) -> str | None:
         value = (self.cleaned_data.get(key) or "").strip()

@@ -6,33 +6,33 @@
   <form method="post" class="add-item" action="">
     {% csrf_token %}
     {{ form.non_field_errors }}
-    <p>
+    <div class="field">
       <label for="{{ form.name.id_for_label }}">Name</label>
       {{ form.name }}
       {{ form.name.errors }}
-    </p>
-    <p>
+    </div>
+    <div class="field">
       <label for="{{ form.url.id_for_label }}">Link <span class="optional">optional</span></label>
       {{ form.url }}
       {{ form.url.errors }}
-    </p>
-    <p>
+    </div>
+    <div class="field">
       <label for="{{ form.price_text.id_for_label }}">Price <span class="optional">optional</span></label>
       {{ form.price_text }}
       {{ form.price_text.errors }}
-    </p>
-    <p>
+    </div>
+    <div class="field">
       <label for="{{ form.tag.id_for_label }}">Tag <span class="optional">optional</span></label>
       {{ form.tag }}
       {{ form.tag.errors }}
-    </p>
+    </div>
     {% if show_giver_note %}
-      <p>
+      <div class="field">
         <label for="{{ form.giver_note.id_for_label }}">Private note <span class="optional">optional</span></label>
         {{ form.giver_note }}
         {% if form.giver_note.help_text %}<span class="help">{{ form.giver_note.help_text }}</span>{% endif %}
         {{ form.giver_note.errors }}
-      </p>
+      </div>
     {% endif %}
     <p class="actions">
       <button type="submit" class="button">Save</button>

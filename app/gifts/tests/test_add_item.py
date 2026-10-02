@@ -82,6 +82,39 @@ class AddItemHTTPTests(TestCase):
         self.assertContains(response, "navy, not black")
         self.assertContains(response, "https://example.com/coat")
 
+    def test_bare_link_gets_https(self) -> None:
+        self._login("ada")
+        self.client.post(
+            "/my-list/add/", {"name": "Coat", "url": "example.com/coat"}
+        )
+        item = Item.objects.get(name="Coat")
+        self.assertEqual(item.url, "https://example.com/coat")
+
+    def test_non_https_links_rejected(self) -> None:
+        self._login("bea")
+        for url in (
+            "http://example.com/coat",
+            "javascript:alert(document.cookie)",
+            "JavaScript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "ftp://example.com/coat",
+        ):
+            with self.subTest(url=url):
+                response = self.client.post(
+                    "/their-list/add/", {"name": "Coat", "url": url}
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "Use a link that starts with https://")
+        self.assertEqual(Item.objects.count(), 0)
+
+    def test_errors_are_not_nested_in_paragraphs(self) -> None:
+        self._login("ada")
+        response = self.client.post("/my-list/add/", {"name": "   "})
+        html = response.content.decode()
+        self.assertContains(response, "errorlist")
+        # A <ul> inside a <p> is invalid HTML; the browser closes the <p> early.
+        self.assertNotRegex(html, r"(?s)<p[ >](?:(?!</p>).)*<ul class=\"errorlist")
+
     def test_giver_note_absent_from_owner_list_html(self) -> None:
         self._login("bea")
         self.client.post(

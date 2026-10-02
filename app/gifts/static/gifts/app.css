@@ -1,12 +1,15 @@
 :root {
-  --bg: #f4efe8;
-  --ink: #1c1410;
-  --muted: #6b5e55;
-  --card: #fffaf4;
-  --line: #e4d8cc;
-  --accent: #9e3b24;
-  --accent-ink: #fffaf4;
-  --focus: #2c6e49;
+  --bg: #eef1ec;
+  --ink: #141a16;
+  --muted: #566158;
+  --card: #fafbf8;
+  --line: #d7ddd3;
+  --accent: #2f5d46;
+  --accent-ink: #fafbf8;
+  --focus: #1f4e79;
+  --success-tint: #e4edf5;
+  --error: #a3352b;
+  --error-tint: #f8e8e5;
 }
 
 * { box-sizing: border-box; }
@@ -104,6 +107,7 @@ h3 { font-size: 1.15rem; margin: 0 0 0.35rem; }
   font-size: 0.95rem;
 }
 
+a:focus-visible,
 .button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
@@ -160,11 +164,12 @@ button:focus-visible {
 
 .meta, .flag, .help, .optional, .empty, .note { color: var(--muted); }
 .optional { font-size: 0.85rem; }
+.meta { margin: 0.2rem 0 0; }
 .note { margin: 0.4rem 0 0; }
 .flag { margin: 0.4rem 0 0; }
 .empty { margin-top: 0.5rem; }
 
-.add-item p { margin: 0 0 0.9rem; }
+.add-item .field { margin: 0 0 0.9rem; }
 .add-item label { display: block; margin-bottom: 0.3rem; }
 .add-item input,
 .add-item textarea {
@@ -194,21 +199,21 @@ button:focus-visible {
   list-style: none;
   padding: 0.75rem 1rem;
   margin: 0 0 1.25rem;
-  background: #e7f3ea;
+  background: var(--success-tint);
   border-radius: 0.75rem;
   color: var(--focus);
 }
 
 .messages:has(.error) {
-  background: #f8eae6;
-  color: var(--accent);
+  background: var(--error-tint);
+  color: var(--error);
 }
 
 .errorlist {
   list-style: none;
   padding: 0;
   margin: 0.35rem 0 0;
-  color: var(--accent);
+  color: var(--error);
 }
 
 @media (max-width: 640px) {
