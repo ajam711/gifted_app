@@ -1,0 +1,41 @@
+<article class="item{% if item.id == highlight %} item-flash{% endif %}" id="item-{{ item.id }}">
+  <h3>{{ item.name }}</h3>
+  {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
+  {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
+  {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
+  {% if item.giver_note %}<p class="note">{{ item.giver_note }}</p>{% endif %}
+  {% if item.claim_released_at and item.reaction == "disliked" %}
+    <p class="notice">{{ partner.name }} said no to this after you claimed it, so your claim was released.</p>
+  {% endif %}
+  {% if actions == "open" %}
+    <form method="post" action="{% url 'claim_item' item.id %}" class="react-actions"
+          hx-post="{% url 'claim_item' item.id %}"
+          hx-target="main"
+          hx-select="main"
+          hx-swap="outerHTML">
+      {% csrf_token %}
+      <button type="submit" class="button">Claim</button>
+    </form>
+  {% elif actions == "yours" %}
+    <div class="react-actions">
+      <form method="post" action="{% url 'give_item' item.id %}"
+            hx-post="{% url 'give_item' item.id %}"
+            hx-target="main"
+            hx-select="main"
+            hx-swap="outerHTML">
+        {% csrf_token %}
+        <button type="submit" class="button">Mark given</button>
+      </form>
+      <form method="post" action="{% url 'unclaim_item' item.id %}"
+            hx-post="{% url 'unclaim_item' item.id %}"
+            hx-target="main"
+            hx-select="main"
+            hx-swap="outerHTML">
+        {% csrf_token %}
+        <button type="submit" class="button button-quiet">Unclaim</button>
+      </form>
+    </div>
+  {% elif actions == "given" %}
+    <p class="meta">Given {{ item.given_at|date:"j M Y" }}</p>
+  {% endif %}
+</article>

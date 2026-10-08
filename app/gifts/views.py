@@ -4,7 +4,15 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
-from domain import Forbidden, Invalid, NotFound, OwnerItemView
+from domain import (
+    Conflict,
+    ConflictReason,
+    Forbidden,
+    Invalid,
+    NotFound,
+    OwnerItemView,
+    ShopperItemView,
+)
 
 from gifts.auth import person_required
 from gifts.forms import AddItemForm
@@ -87,18 +95,121 @@ def react_item(request, item_id: int):
     return redirect("my_list")
 
 
+def _grouped_shopper_items(
+    items: list[ShopperItemView], shopper_id: int
+) -> dict[str, list[ShopperItemView]]:
+    """Their list groups, derived from the row like ``domain.views`` predicates.
+
+    Disliked items get their own group with no actions, so a suggestion
+    the owner turned down does not just vanish from the shopper's view.
+    """
+
+    groups: dict[str, list[ShopperItemView]] = {
+        "open": [],
+        "yours": [],
+        "waiting": [],
+        "given": [],
+        "disliked": [],
+    }
+    for item in items:
+        if item.given_at is not None:
+            groups["given"].append(item)
+        elif item.claimed_by_id == shopper_id:
+            groups["yours"].append(item)
+        elif item.reaction == "liked" and item.claimed_by_id is None:
+            groups["open"].append(item)
+        elif item.reaction is None:
+            groups["waiting"].append(item)
+        elif item.reaction == "disliked":
+            groups["disliked"].append(item)
+    return groups
+
+
 @person_required
 def their_list(request):
     store = DjangoStore()
     partner = _partner(store, request.person.id)
     if partner is None:
         raise Http404("Not found")
-    items = store.shopper_items(request.person.id)
+    groups = _grouped_shopper_items(
+        store.shopper_items(request.person.id), request.person.id
+    )
+    # ``?item=<id>`` after a claim / unclaim / give: briefly highlight that card.
+    highlight = request.GET.get("item", "")
     return render(
         request,
         "gifts/their_list.html",
-        {"person": request.person, "partner": partner, "items": items},
+        {
+            "person": request.person,
+            "partner": partner,
+            "has_items": any(groups.values()),
+            "highlight": int(highlight) if highlight.isdigit() else None,
+            **groups,
+        },
     )
+
+
+# Shopper-only refusal messages. Only the partner can reach these (the
+# domain checks the actor before the item's state), so they may talk
+# about claims. ``{name}`` is the item, ``{partner}`` the list owner.
+_CONFLICT_MESSAGES: dict[ConflictReason, str] = {
+    "yours": "You already claimed {name}. It's under Yours.",
+    "claimed": "{name} is already claimed.",
+    "not_claimed": "You haven't claimed {name}.",
+    "not_liked": "{partner} hasn't liked {name} yet.",
+    "disliked": "{partner} no longer wants {name}. It's under Not for {partner}.",
+    "given": "{name} was already marked given.",
+}
+
+
+def _shopper_action(request, item_id: int, action: str, done: str):
+    """Claim / unclaim / give. Shopper-only, so every result goes to Their list.
+
+    ``done`` is the success message template, with ``{name}``. A
+    ``Conflict`` says why, and the item it was about is highlighted.
+    ``Forbidden`` is only reachable by the owner typing a URL by hand;
+    it gets one generic message whatever the item's state.
+    """
+
+    store = DjangoStore()
+    their_list_url = f"{reverse('their_list')}?item={item_id}"
+    try:
+        saved = getattr(store, action)(request.person.id, item_id)
+    except Conflict as refusal:
+        item = store.shopper_item(request.person.id, item_id)
+        partner = _partner(store, request.person.id)
+        messages.warning(
+            request,
+            _CONFLICT_MESSAGES[refusal.reason].format(
+                name=item.name, partner=partner.name
+            ),
+        )
+        return redirect(their_list_url)
+    except (Forbidden, Invalid):
+        messages.error(request, "Could not save that.")
+        return redirect("their_list")
+    except NotFound:
+        raise Http404("Not found") from None
+    messages.success(request, done.format(name=saved.name))
+    return redirect(their_list_url)
+
+
+@person_required
+@require_POST
+def claim_item(request, item_id: int):
+    return _shopper_action(request, item_id, "claim", "Claimed {name}.")
+
+
+@person_required
+@require_POST
+def unclaim_item(request, item_id: int):
+    return _shopper_action(request, item_id, "unclaim", "Released {name}.")
+
+
+@person_required
+@require_POST
+def give_item(request, item_id: int):
+    return _shopper_action(request, item_id, "give", "Marked {name} as given.")
 
 
 @person_required

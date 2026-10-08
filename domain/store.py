@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime, timezone
 
-from domain.errors import Forbidden, Invalid, NotFound
+from domain.errors import Conflict, ConflictReason, Forbidden, Invalid, NotFound
 from domain.models import Connection, ImportantDate, Item, Person, Reaction
 from domain.views import (
     OwnerItemView,
@@ -72,6 +72,7 @@ def prepare_new_item(
         "claimed_by_id": None,
         "claimed_at": None,
         "given_at": None,
+        "claim_released_at": None,
         "created_at": now,
     }
 
@@ -84,18 +85,102 @@ def prepare_reaction(
 ) -> Item:
     """Replacement row after a valid owner reaction.
 
-    Not the owner → ``Forbidden``. Bad value, or ``claimed_by_id`` set →
-    ``Invalid()`` with no reason. Persistence writes ``reaction`` and
-    ``reacted_at`` from the returned row.
+    Not the owner → ``Forbidden``. Bad value → ``Invalid()``. Otherwise
+    it always succeeds, claimed or not, so the owner's response cannot
+    reveal a claim.
+
+    Disliking an item that is claimed but not given releases the claim
+    and stamps ``claim_released_at`` so the shopper is told. Any other
+    reaction clears that stamp. Given items keep their claim: they are
+    history, whatever the owner thinks of them now.
     """
 
     if item.owner_id != actor_id:
         raise Forbidden()
     if reaction not in _VALID_REACTIONS:
         raise Invalid()
+    updated = replace(item, reaction=reaction, reacted_at=now)
+    if item.given_at is not None:
+        return updated
+    if reaction == "disliked" and item.claimed_by_id is not None:
+        return replace(
+            updated, claimed_by_id=None, claimed_at=None, claim_released_at=now
+        )
+    return replace(updated, claim_released_at=None)
+
+
+def _require_shopper(item: Item, actor_id: int, actor_is_partner: bool) -> None:
+    """Owner or stranger → ``Forbidden``, before any look at claim state.
+
+    This runs first in every shopper action so the owner gets the same
+    refusal whatever the item's state, and never reaches ``Conflict``.
+    """
+
+    if item.owner_id == actor_id or not actor_is_partner:
+        raise Forbidden()
+
+
+def _not_claimable_reason(item: Item, actor_id: int) -> ConflictReason | None:
+    """Why the shopper cannot claim this item, or ``None`` if they can."""
+
+    if item.given_at is not None:
+        return "given"
+    if item.claimed_by_id == actor_id:
+        return "yours"
     if item.claimed_by_id is not None:
-        raise Invalid()
-    return replace(item, reaction=reaction, reacted_at=now)
+        return "claimed"
+    if item.reaction == "disliked":
+        return "disliked"
+    if item.reaction is None:
+        return "not_liked"
+    return None
+
+
+def prepare_claim(
+    item: Item,
+    actor_id: int,
+    actor_is_partner: bool,
+    now: datetime,
+) -> Item:
+    """Replacement row after a valid partner claim.
+
+    Owner or non-partner → ``Forbidden``. Partner, but the item is not
+    ``liked_open`` → ``Conflict`` with the reason.
+    """
+
+    _require_shopper(item, actor_id, actor_is_partner)
+    reason = _not_claimable_reason(item, actor_id)
+    if reason is not None:
+        raise Conflict(reason)
+    return replace(
+        item, claimed_by_id=actor_id, claimed_at=now, claim_released_at=None
+    )
+
+
+def _require_own_claim(item: Item, actor_id: int, actor_is_partner: bool) -> None:
+    """Unclaim / give guard: partner, holding the claim, not yet given."""
+
+    _require_shopper(item, actor_id, actor_is_partner)
+    if item.given_at is not None:
+        raise Conflict("given")
+    if item.claimed_by_id != actor_id:
+        raise Conflict("disliked" if item.reaction == "disliked" else "not_claimed")
+
+
+def prepare_unclaim(item: Item, actor_id: int, actor_is_partner: bool) -> Item:
+    """Replacement row after the claimer releases an item not yet given."""
+
+    _require_own_claim(item, actor_id, actor_is_partner)
+    return replace(item, claimed_by_id=None, claimed_at=None)
+
+
+def prepare_give(
+    item: Item, actor_id: int, actor_is_partner: bool, now: datetime
+) -> Item:
+    """Replacement row after the claimer marks it given. ``claimed_by_id`` stays."""
+
+    _require_own_claim(item, actor_id, actor_is_partner)
+    return replace(item, given_at=now)
 
 
 def _utc_now() -> datetime:
@@ -266,43 +351,36 @@ class InMemoryStore:
         """Partner claims a ``liked_open`` item.
 
         Returns a shopper view (the owner must never receive this).
-        Owner, stranger, disliked, pending, already claimed, already
-        given → ``Forbidden`` or ``NotFound``, never an item payload.
+        Owner or stranger → ``Forbidden``; missing → ``NotFound``.
+        Partner on a disliked, pending, claimed or given item →
+        ``Conflict`` with the reason. Never an item payload.
         """
 
-        item = self._items.get(item_id)
-        if item is None:
-            raise NotFound()
-        if item.owner_id == actor_id or not self._is_partner(actor_id, item.owner_id):
-            raise Forbidden()
-        if not liked_open(item):
-            raise Forbidden()
-        updated = replace(item, claimed_by_id=actor_id, claimed_at=self._now())
+        item = self._require_item(item_id)
+        updated = prepare_claim(
+            item, actor_id, self._is_partner(actor_id, item.owner_id), self._now()
+        )
         self._items[item.id] = updated
         return to_shopper_view(updated)
 
     def unclaim(self, actor_id: int, item_id: int) -> ShopperItemView:
         """Claimer releases an item that is not yet given."""
 
-        item = self._items.get(item_id)
-        if item is None:
-            raise NotFound()
-        if item.claimed_by_id != actor_id or item.given_at is not None:
-            raise Forbidden()
-        updated = replace(item, claimed_by_id=None, claimed_at=None)
-        self._items[item.id] = updated
+        item = self._require_item(item_id)
+        updated = prepare_unclaim(
+            item, actor_id, self._is_partner(actor_id, item.owner_id)
+        )
+        self._items[updated.id] = updated
         return to_shopper_view(updated)
 
     def give(self, actor_id: int, item_id: int) -> ShopperItemView:
         """Claimer marks the gift given. ``claimed_by_id`` stays for history."""
 
-        item = self._items.get(item_id)
-        if item is None:
-            raise NotFound()
-        if item.claimed_by_id != actor_id or item.given_at is not None:
-            raise Forbidden()
-        updated = replace(item, given_at=self._now())
-        self._items[item.id] = updated
+        item = self._require_item(item_id)
+        updated = prepare_give(
+            item, actor_id, self._is_partner(actor_id, item.owner_id), self._now()
+        )
+        self._items[updated.id] = updated
         return to_shopper_view(updated)
 
     def delete(self, actor_id: int, item_id: int) -> None:

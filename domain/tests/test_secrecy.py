@@ -96,18 +96,47 @@ class SecrecyTests(DomainTestCase):
         self.assert_silent(ctx.exception)
         self.assertEqual(ctx.exception.args, ("Not allowed",))
 
-    def test_react_and_delete_errors_do_not_reveal_claim(self) -> None:
-        """Both refusals are the same generic Invalid, with silent text."""
+    def test_dislike_result_identical_claimed_or_not(self) -> None:
+        """Disliking always succeeds; the owner's result cannot tell a claim was released."""
 
+        store, ada, bea = two_people()
+        open_item = store.add_item(ada.id, ada.id, "A")
+        claimed_item = store.add_item(ada.id, ada.id, "A")
+        store.claim(bea.id, claimed_item.id)
+        a = asdict(store.react(ada.id, open_item.id, "disliked"))
+        b = asdict(store.react(ada.id, claimed_item.id, "disliked"))
+        a.pop("id")
+        b.pop("id")
+        self.assertEqual(a, b)
+        self.assertTrue(SHOPPER_ONLY_FIELDS.isdisjoint(b))
+
+    def test_owner_gets_forbidden_never_conflict(self) -> None:
+        """The owner probing shopper actions gets the same silent refusal in every state."""
+
+        store, ada, bea = two_people()
+        open_item = store.add_item(ada.id, ada.id, "Open")
+        claimed_item = store.add_item(ada.id, ada.id, "Claimed")
+        given_item = store.add_item(ada.id, ada.id, "Given")
+        store.claim(bea.id, claimed_item.id)
+        store.claim(bea.id, given_item.id)
+        store.give(bea.id, given_item.id)
+        for action in (store.claim, store.unclaim, store.give):
+            for item in (open_item, claimed_item, given_item):
+                with self.subTest(action=action.__name__, item=item.name):
+                    with self.assertRaises(Forbidden) as ctx:
+                        action(ada.id, item.id)
+                    self.assertIs(type(ctx.exception), Forbidden)
+                    self.assert_silent(ctx.exception)
+
+    def test_delete_error_does_not_reveal_claim(self) -> None:
         store, ada, bea = two_people()
         view = store.add_item(ada.id, ada.id, "A")
         store.claim(bea.id, view.id)
-        with self.assertRaises(Invalid) as react_ctx:
-            store.react(ada.id, view.id, "disliked")
         with self.assertRaises(Invalid) as delete_ctx:
             store.delete(ada.id, view.id)
-        self.assertEqual(str(react_ctx.exception), str(delete_ctx.exception))
-        self.assert_silent(react_ctx.exception)
+        with self.assertRaises(Invalid) as missing_ctx:
+            store.delete(ada.id, 9999)
+        self.assertEqual(str(delete_ctx.exception), str(missing_ctx.exception))
         self.assert_silent(delete_ctx.exception)
 
     def test_shopper_sees_claim_and_history(self) -> None:

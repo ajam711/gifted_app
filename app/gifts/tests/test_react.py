@@ -86,7 +86,9 @@ class ReactHTTPTests(TestCase):
         item.refresh_from_db()
         self.assertIsNone(item.reaction)
 
-    def test_claimed_react_is_generic_and_silent(self) -> None:
+    def test_dislike_on_claimed_item_saves_normally(self) -> None:
+        """The owner sees a normal save; the claim is released behind the scenes."""
+
         self._login("ada")
         self.client.post("/my-list/add/", {"name": "Watch"})
         item = Item.objects.get(name="Watch")
@@ -98,13 +100,13 @@ class ReactHTTPTests(TestCase):
             follow=True,
         )
         self.assertEqual(response.redirect_chain, [("/my-list/", 302)])
-        self.assertContains(response, "Could not save that.")
+        self.assertContains(response, "Saved Watch.")
         body = response.content.decode().lower()
         self.assertNotIn("claim", body)
-        self.assertNotIn("claimed_by", body)
-        self.assertNotIn("given_at", body)
+        self.assertNotIn("released", body)
         item.refresh_from_db()
-        self.assertEqual(item.reaction, "liked")
+        self.assertEqual(item.reaction, "disliked")
+        self.assertIsNone(item.claimed_by_id)
 
     def test_missing_item_is_404(self) -> None:
         self._login("ada")

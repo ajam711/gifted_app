@@ -6,7 +6,7 @@ Product contract: [V1.md](V1.md). Read that before writing code.
 
 ## Status
 
-Domain layer is in `domain/` (dataclasses, in-memory store, tests). The Django app is in `app/`: session login, Home doors, My list / Their list, Add item, and owner react against SQLite. Claim / give / Home badges / deploy are not in this slice.
+Domain layer is in `domain/` (dataclasses, in-memory store, tests). The Django app is in `app/`: session login, Home doors, My list / Their list, Add item, owner react, and partner claim / unclaim / give against SQLite. Home badges / deploy are not in this slice.
 
 ## Setup
 

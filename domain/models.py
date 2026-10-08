@@ -104,7 +104,7 @@ class Item:
         stays unique.
 
     Shopper-only columns (``giver_note``, ``claimed_by_id``,
-    ``claimed_at``, ``given_at``) *are* stored on the row. They must
+    ``claimed_at``, ``given_at``, ``claim_released_at``) *are* stored on the row. They must
     never appear on ``OwnerItemView``. Absence from the view is the
     secrecy rule, not CSS and not ``None`` placeholders.
 
@@ -122,6 +122,8 @@ class Item:
         claimed_by_id: Who claimed it. Omit from owner views.
         claimed_at: When it was claimed. Omit from owner views.
         given_at: When the claimer marked it given. Omit from owner views.
+        claim_released_at: When an owner dislike released the shopper's
+            claim. Drives the shopper's notice. Omit from owner views.
         created_at: Insert time.
     """
 
@@ -138,4 +140,5 @@ class Item:
     claimed_by_id: int | None
     claimed_at: datetime | None
     given_at: datetime | None
+    claim_released_at: datetime | None
     created_at: datetime

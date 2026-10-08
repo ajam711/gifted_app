@@ -14,4 +14,9 @@ urlpatterns = [
         {"list_key": "theirs"},
         name="add_their_item",
     ),
+    path("their-list/<int:item_id>/claim/", views.claim_item, name="claim_item"),
+    path(
+        "their-list/<int:item_id>/unclaim/", views.unclaim_item, name="unclaim_item"
+    ),
+    path("their-list/<int:item_id>/give/", views.give_item, name="give_item"),
 ]

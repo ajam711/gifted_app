@@ -3,7 +3,14 @@
 Callers receive ``OwnerItemView`` / ``ShopperItemView``, never a raw ``Item``.
 Add-item construction lives in ``domain.prepare_new_item`` so the self-add
 liked rule cannot drift. React uses ``domain.prepare_reaction`` so claimed
-refusals stay generic.
+refusals stay generic. Claim / unclaim / give use the matching
+``domain.prepare_*`` helpers for the same reason.
+
+Every mutation goes through ``_mutate``: read the row, apply the domain
+rule, then write only if the row is unchanged since the read. If the
+other person changed it in between, the rule is re-checked against the
+fresh row, so the result is always what the rules say for the current
+state, never a mix of two requests.
 """
 
 from collections.abc import Callable
@@ -11,17 +18,33 @@ from datetime import datetime, timezone
 
 from domain import (
     Forbidden,
+    Invalid,
     NotFound,
     OwnerItemView,
     ShopperItemView,
+    prepare_claim,
+    prepare_give,
     prepare_new_item,
     prepare_reaction,
+    prepare_unclaim,
     to_owner_view,
     to_shopper_view,
 )
 from domain.models import Item as DomainItem
 
 from gifts.models import Connection, Item, Person
+
+
+# Columns a mutation can change. Every save checks they are unchanged since the read.
+_STATE_COLUMNS = (
+    "reaction",
+    "reacted_at",
+    "claimed_by_id",
+    "claimed_at",
+    "given_at",
+    "claim_released_at",
+)
+_MAX_ATTEMPTS = 3
 
 
 def _utc_now() -> datetime:
@@ -45,6 +68,7 @@ def domain_item(row: Item) -> DomainItem:
         claimed_by_id=row.claimed_by_id,
         claimed_at=row.claimed_at,
         given_at=row.given_at,
+        claim_released_at=row.claim_released_at,
         created_at=row.created_at,
     )
 
@@ -94,12 +118,53 @@ class DjangoStore:
         return to_shopper_view(item)
 
     def react(self, actor_id: int, item_id: int, reaction: str) -> OwnerItemView:
-        row = self._require_item_row(item_id)
-        updated = prepare_reaction(domain_item(row), actor_id, reaction, self._now())
-        row.reaction = updated.reaction
-        row.reacted_at = updated.reacted_at
-        row.save(update_fields=["reaction", "reacted_at"])
+        updated = self._mutate(
+            item_id,
+            lambda item: prepare_reaction(item, actor_id, reaction, self._now()),
+        )
         return to_owner_view(updated)
+
+    def claim(self, actor_id: int, item_id: int) -> ShopperItemView:
+        updated = self._mutate(
+            item_id,
+            lambda item: prepare_claim(
+                item,
+                actor_id,
+                self._is_partner(actor_id, item.owner_id),
+                self._now(),
+            ),
+        )
+        return to_shopper_view(updated)
+
+    def unclaim(self, actor_id: int, item_id: int) -> ShopperItemView:
+        updated = self._mutate(
+            item_id,
+            lambda item: prepare_unclaim(
+                item, actor_id, self._is_partner(actor_id, item.owner_id)
+            ),
+        )
+        return to_shopper_view(updated)
+
+    def give(self, actor_id: int, item_id: int) -> ShopperItemView:
+        updated = self._mutate(
+            item_id,
+            lambda item: prepare_give(
+                item,
+                actor_id,
+                self._is_partner(actor_id, item.owner_id),
+                self._now(),
+            ),
+        )
+        return to_shopper_view(updated)
+
+    def shopper_item(self, actor_id: int, item_id: int) -> ShopperItemView:
+        """One item on the partner's list. Anything else is ``NotFound``."""
+
+        owner_id = self.partner_id(actor_id)
+        row = self._require_item_row(item_id)
+        if row.owner_id != owner_id:
+            raise NotFound()
+        return to_shopper_view(domain_item(row))
 
     def owner_items(self, actor_id: int) -> list[OwnerItemView]:
         self._require_person(actor_id)
@@ -122,6 +187,26 @@ class DjangoStore:
             return Item.objects.get(pk=item_id)
         except Item.DoesNotExist:
             raise NotFound() from None
+
+    def _mutate(
+        self, item_id: int, rule: Callable[[DomainItem], DomainItem]
+    ) -> DomainItem:
+        """Read, apply ``rule``, write if unchanged; re-read and retry if not.
+
+        ``rule`` raises the domain refusal for the state it is given, so
+        a retry against the fresh row turns a race into the right answer
+        (e.g. a claim that lost to a dislike becomes ``Conflict("disliked")``).
+        After ``_MAX_ATTEMPTS`` losses in a row, give up with ``Invalid()``.
+        """
+
+        for _attempt in range(_MAX_ATTEMPTS):
+            row = self._require_item_row(item_id)
+            updated = rule(domain_item(row))
+            read = {column: getattr(row, column) for column in _STATE_COLUMNS}
+            changes = {column: getattr(updated, column) for column in _STATE_COLUMNS}
+            if Item.objects.filter(pk=row.pk, **read).update(**changes) == 1:
+                return updated
+        raise Invalid()
 
     def _partner_id_or_none(self, person_id: int) -> int | None:
         conn = (

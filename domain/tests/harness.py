@@ -47,7 +47,13 @@ OWNER_VIEW_FIELDS = {
     "reaction",
 }
 
-SHOPPER_ONLY_FIELDS = {"giver_note", "claimed_by_id", "claimed_at", "given_at"}
+SHOPPER_ONLY_FIELDS = {
+    "giver_note",
+    "claimed_by_id",
+    "claimed_at",
+    "given_at",
+    "claim_released_at",
+}
 
 
 def two_people() -> tuple[InMemoryStore, Person, Person]:

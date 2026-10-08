@@ -28,7 +28,8 @@ class OwnerItemView:
     """What the list owner is allowed to see.
 
     Compare this field list with ``ShopperItemView``. The shopper-only
-    four (``giver_note``, ``claimed_by_id``, ``claimed_at``, ``given_at``)
+    five (``giver_note``, ``claimed_by_id``, ``claimed_at``, ``given_at``,
+    ``claim_released_at``)
     are not present *at all* — not ``None``, not omitted at JSON dump
     time. ``asdict(owner_view)`` therefore has the same keys before and
     after a claim, which is the secrecy test.
@@ -48,8 +49,9 @@ class OwnerItemView:
 class ShopperItemView:
     """What the partner sees when shopping the owner's list.
 
-    Same public fields as the owner view, plus the four shopper-only
-    columns used for claim / "yours" / given-before history.
+    Same public fields as the owner view, plus the five shopper-only
+    columns used for claim / "yours" / given-before history and the
+    "your claim was released" notice.
     """
 
     id: int
@@ -64,6 +66,7 @@ class ShopperItemView:
     claimed_by_id: int | None
     claimed_at: datetime | None
     given_at: datetime | None
+    claim_released_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +153,7 @@ def to_shopper_view(item: Item) -> ShopperItemView:
         claimed_by_id=item.claimed_by_id,
         claimed_at=item.claimed_at,
         given_at=item.given_at,
+        claim_released_at=item.claim_released_at,
     )
 
 

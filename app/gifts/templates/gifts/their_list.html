@@ -6,20 +6,57 @@
     <h1>{{ partner.name }}'s list</h1>
     <a class="button" href="{% url 'add_their_item' %}">Add item</a>
   </div>
-  {% if items %}
-    <ul class="items">
-      {% for item in items %}
-        <li>
-          <article class="item">
-            <h2>{{ item.name }}</h2>
-            {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
-            {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
-            {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
-            {% if item.giver_note %}<p class="note">{{ item.giver_note }}</p>{% endif %}
-          </article>
-        </li>
-      {% endfor %}
-    </ul>
+  {% if has_items %}
+    {% if yours %}
+      <section class="item-group" aria-labelledby="yours-heading">
+        <h2 id="yours-heading" class="group-title">Yours</h2>
+        <ul class="items">
+          {% for item in yours %}
+            <li>{% include "gifts/_shopper_item.html" with actions="yours" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    {% if open %}
+      <section class="item-group" aria-labelledby="open-heading">
+        <h2 id="open-heading" class="group-title">Liked</h2>
+        <ul class="items">
+          {% for item in open %}
+            <li>{% include "gifts/_shopper_item.html" with actions="open" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    {% if waiting %}
+      <section class="item-group" aria-labelledby="waiting-heading">
+        <h2 id="waiting-heading" class="group-title">Waiting on {{ partner.name }}</h2>
+        <ul class="items">
+          {% for item in waiting %}
+            <li>{% include "gifts/_shopper_item.html" with actions="" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    {% if disliked %}
+      <section class="item-group" aria-labelledby="disliked-heading">
+        <h2 id="disliked-heading" class="group-title">Not for {{ partner.name }}</h2>
+        <ul class="items">
+          {% for item in disliked %}
+            <li>{% include "gifts/_shopper_item.html" with actions="" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    {% if given %}
+      <section class="item-group" aria-labelledby="given-heading">
+        <h2 id="given-heading" class="group-title">Given before</h2>
+        <ul class="items">
+          {% for item in given %}
+            <li>{% include "gifts/_shopper_item.html" with actions="given" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
   {% else %}
     <p class="empty">Nothing here yet.</p>
   {% endif %}
