@@ -1,28 +1,98 @@
+from getpass import getpass
+
 from django.contrib.auth.models import User
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
 from django.utils import timezone
 
 from gifts.models import Connection, Person
 
+SIDES = ("first", "second")
+
 
 class Command(BaseCommand):
-    help = "Create the two operator accounts, Person rows, and their Connection."
+    help = (
+        "Create the two accounts, their Person rows, and their Connection. "
+        "Re-running with the same usernames updates names, emails and passwords."
+    )
 
     def add_arguments(self, parser):
-        parser.add_argument("--ada-password", required=True)
-        parser.add_argument("--bea-password", required=True)
+        for side in SIDES:
+            parser.add_argument(f"--{side}-username", required=True)
+            parser.add_argument(
+                f"--{side}-name",
+                required=True,
+                help="Display name shown to the other person.",
+            )
+            parser.add_argument(f"--{side}-email", required=True)
+            parser.add_argument(
+                f"--{side}-password",
+                help="Prompted for when omitted.",
+            )
 
     def handle(self, *args, **options):
-        ada = self._person("ada", "Ada", "ada@example.com", options["ada_password"])
-        bea = self._person("bea", "Bea", "bea@example.com", options["bea_password"])
-        first, second = (ada, bea) if ada.id < bea.id else (bea, ada)
-        Connection.objects.get_or_create(
-            person_a=first,
-            person_b=second,
-            defaults={"created_at": timezone.now()},
+        people = [
+            {
+                "username": options[f"{side}_username"].strip(),
+                "name": options[f"{side}_name"].strip(),
+                "email": options[f"{side}_email"].strip(),
+                "password": options[f"{side}_password"],
+            }
+            for side in SIDES
+        ]
+        for person in people:
+            if not person["username"] or not person["name"]:
+                raise CommandError("Usernames and names cannot be blank.")
+        if people[0]["username"] == people[1]["username"]:
+            raise CommandError("The two people need different usernames.")
+
+        self._refuse_other_pair({p["username"] for p in people})
+
+        for person in people:
+            if not person["password"]:
+                person["password"] = self._ask_password(person["username"])
+
+        with transaction.atomic():
+            first, second = (self._person(**p) for p in people)
+            low, high = (first, second) if first.id < second.id else (second, first)
+            Connection.objects.get_or_create(
+                person_a=low,
+                person_b=high,
+                defaults={"created_at": timezone.now()},
+            )
+
+        self.stdout.write(
+            self.style.SUCCESS(f"{first.name} and {second.name} are connected.")
         )
-        self.stdout.write(self.style.SUCCESS("Ada and Bea are connected."))
-        self.stdout.write("Log in as ada or bea with the passwords you passed.")
+        self.stdout.write(
+            f"Log in as {first.user.username} or {second.user.username}."
+        )
+
+    def _refuse_other_pair(self, usernames: set[str]) -> None:
+        existing = Connection.objects.select_related(
+            "person_a__user", "person_b__user"
+        ).first()
+        if existing is None:
+            return
+        connected = {existing.person_a.user.username, existing.person_b.user.username}
+        if connected != usernames:
+            raise CommandError(
+                "A pair is already connected ("
+                + " and ".join(sorted(connected))
+                + "). V1 allows exactly one pair. To rename someone, edit "
+                "Person.name and User.first_name in Django admin."
+            )
+
+    def _ask_password(self, username: str) -> str:
+        while True:
+            password = getpass(f"Password for {username}: ")
+            if not password:
+                self.stderr.write("Password cannot be blank.")
+                continue
+            if getpass(f"Password for {username} (again): ") != password:
+                self.stderr.write("Passwords did not match.")
+                continue
+            return password
 
     def _person(self, username: str, name: str, email: str, password: str) -> Person:
         user, _created = User.objects.get_or_create(

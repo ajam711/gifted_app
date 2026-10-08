@@ -16,11 +16,17 @@ Python 3.14. Dependencies go in a project venv (not system Python, not Homebrew 
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python app/manage.py migrate
-.venv/bin/python app/manage.py bootstrap_pair --ada-password 'choose-one' --bea-password 'choose-one'
+.venv/bin/python app/manage.py bootstrap_pair \
+  --first-username sam --first-name Sam --first-email sam@example.com \
+  --second-username kit --second-name Kit --second-email kit@example.com
 .venv/bin/python app/manage.py runserver
 ```
 
-Log in as `ada` or `bea`. Add-item URLs are `/my-list/add/` and `/their-list/add/` — the list is the screen you opened, not a picker.
+Use the two real people's details. The command prompts for each password; `--first-password` / `--second-password` skip the prompt (handy for scripts, but they end up in shell history). Re-running with the same two usernames updates names, emails and passwords. V1 allows exactly one pair, so a different pair is refused once one is connected.
+
+To rename someone later, edit `Person.name` (what the other person sees) and `User.first_name` in Django admin at `/admin/`. Admin needs a staff account: `.venv/bin/python app/manage.py createsuperuser`.
+
+Log in with either username. Add-item URLs are `/my-list/add/` and `/their-list/add/` — the list is the screen you opened, not a picker.
 
 ## Tests
 
