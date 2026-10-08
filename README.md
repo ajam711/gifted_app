@@ -1,4 +1,4 @@
-# Gift app
+# Gifted
 
 Private two-person web app: shared standing lists, owner reactions, partner claims, and a given-item history so gifts are not repeated. Either person can add to either list. The list owner must never observe claims on their own items — not in the UI, not in payloads, not in counts, not in response size.
 
