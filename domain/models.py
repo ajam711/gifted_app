@@ -122,8 +122,14 @@ class Item:
         claimed_by_id: Who claimed it. Omit from owner views.
         claimed_at: When it was claimed. Omit from owner views.
         given_at: When the claimer marked it given. Omit from owner views.
-        claim_released_at: When an owner dislike released the shopper's
-            claim. Drives the shopper's notice. Omit from owner views.
+        claim_released_at: When an owner dislike or "got it elsewhere"
+            released the shopper's claim. Drives the shopper's notice.
+            Omit from owner views.
+        received_at: When the owner had it in hand: the shopper's give
+            (same instant as ``given_at``) or the owner's "got it
+            elsewhere". Owner-visible; this is the hand-over reveal.
+        received_from: Optional free-text giver the owner typed for a
+            gift received elsewhere (``"Grandma"``). Owner-visible.
         created_at: Insert time.
     """
 
@@ -141,4 +147,6 @@ class Item:
     claimed_at: datetime | None
     given_at: datetime | None
     claim_released_at: datetime | None
+    received_at: datetime | None
+    received_from: str | None
     created_at: datetime

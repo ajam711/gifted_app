@@ -110,6 +110,8 @@ class Item(models.Model):
     claimed_at = models.DateTimeField(null=True, blank=True)
     given_at = models.DateTimeField(null=True, blank=True)
     claim_released_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(null=True, blank=True)
+    received_from = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField()
 
     class Meta:

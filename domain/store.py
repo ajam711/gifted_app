@@ -35,6 +35,7 @@ from domain.views import (
 )
 
 _VALID_REACTIONS = frozenset({"liked", "disliked"})
+RECEIVED_FROM_MAX_LENGTH = 100
 
 
 def prepare_new_item(
@@ -73,6 +74,8 @@ def prepare_new_item(
         "claimed_at": None,
         "given_at": None,
         "claim_released_at": None,
+        "received_at": None,
+        "received_from": None,
         "created_at": now,
     }
 
@@ -89,10 +92,11 @@ def prepare_reaction(
     it always succeeds, claimed or not, so the owner's response cannot
     reveal a claim.
 
-    Disliking an item that is claimed but not given releases the claim
-    and stamps ``claim_released_at`` so the shopper is told. Any other
-    reaction clears that stamp. Given items keep their claim: they are
-    history, whatever the owner thinks of them now.
+    Disliking an item that is claimed but not received releases the
+    claim and stamps ``claim_released_at`` so the shopper is told. Any
+    other reaction clears that stamp. Received items (given, or got
+    elsewhere) keep their claim and notice: they are history, whatever
+    the owner thinks of them now.
     """
 
     if item.owner_id != actor_id:
@@ -100,7 +104,7 @@ def prepare_reaction(
     if reaction not in _VALID_REACTIONS:
         raise Invalid()
     updated = replace(item, reaction=reaction, reacted_at=now)
-    if item.given_at is not None:
+    if item.received_at is not None:
         return updated
     if reaction == "disliked" and item.claimed_by_id is not None:
         return replace(
@@ -125,6 +129,8 @@ def _not_claimable_reason(item: Item, actor_id: int) -> ConflictReason | None:
 
     if item.given_at is not None:
         return "given"
+    if item.received_at is not None:
+        return "received"
     if item.claimed_by_id == actor_id:
         return "yours"
     if item.claimed_by_id is not None:
@@ -163,6 +169,8 @@ def _require_own_claim(item: Item, actor_id: int, actor_is_partner: bool) -> Non
     _require_shopper(item, actor_id, actor_is_partner)
     if item.given_at is not None:
         raise Conflict("given")
+    if item.received_at is not None:
+        raise Conflict("received")
     if item.claimed_by_id != actor_id:
         raise Conflict("disliked" if item.reaction == "disliked" else "not_claimed")
 
@@ -177,10 +185,56 @@ def prepare_unclaim(item: Item, actor_id: int, actor_is_partner: bool) -> Item:
 def prepare_give(
     item: Item, actor_id: int, actor_is_partner: bool, now: datetime
 ) -> Item:
-    """Replacement row after the claimer marks it given. ``claimed_by_id`` stays."""
+    """Replacement row after the claimer hands it over. ``claimed_by_id`` stays.
+
+    Give is the hand-over, so the owner has it now: ``received_at`` is
+    set in the same write and the owner sees it under Received, from
+    the claimer. The UI confirms before calling this.
+    """
 
     _require_own_claim(item, actor_id, actor_is_partner)
-    return replace(item, given_at=now)
+    return replace(item, given_at=now, received_at=now)
+
+
+def prepare_receive(
+    item: Item, actor_id: int, received_from: str | None, now: datetime
+) -> Item:
+    """Replacement row after the owner records a gift received elsewhere.
+
+    Not the owner → ``Forbidden``. Already received → ``Invalid()``.
+    Otherwise it succeeds whether or not the item is claimed, and the
+    owner's view of the result is the same either way. A claim is
+    released with ``claim_released_at`` so the shopper is told.
+    """
+
+    if item.owner_id != actor_id:
+        raise Forbidden()
+    if item.received_at is not None:
+        raise Invalid()
+    giver = (received_from or "").strip() or None
+    if giver is not None and len(giver) > RECEIVED_FROM_MAX_LENGTH:
+        raise Invalid("Name is too long")
+    updated = replace(item, received_at=now, received_from=giver)
+    if item.claimed_by_id is not None:
+        return replace(
+            updated, claimed_by_id=None, claimed_at=None, claim_released_at=now
+        )
+    return updated
+
+
+def prepare_unreceive(item: Item, actor_id: int) -> Item:
+    """Undo the owner's "got it elsewhere". A gift the partner gave stays.
+
+    A claim released by the receive stays released; the notice goes.
+    """
+
+    if item.owner_id != actor_id:
+        raise Forbidden()
+    if item.received_at is None or item.given_at is not None:
+        raise Invalid()
+    return replace(
+        item, received_at=None, received_from=None, claim_released_at=None
+    )
 
 
 def _utc_now() -> datetime:
@@ -382,6 +436,24 @@ class InMemoryStore:
         )
         self._items[updated.id] = updated
         return to_shopper_view(updated)
+
+    def receive(
+        self, actor_id: int, item_id: int, received_from: str | None = None
+    ) -> OwnerItemView:
+        """Owner got it from someone else. Same response, claimed or not."""
+
+        item = self._require_item(item_id)
+        updated = prepare_receive(item, actor_id, received_from, self._now())
+        self._items[updated.id] = updated
+        return to_owner_view(updated)
+
+    def unreceive(self, actor_id: int, item_id: int) -> OwnerItemView:
+        """Owner undoes a "got it elsewhere"."""
+
+        item = self._require_item(item_id)
+        updated = prepare_unreceive(item, actor_id)
+        self._items[updated.id] = updated
+        return to_owner_view(updated)
 
     def delete(self, actor_id: int, item_id: int) -> None:
         """Owner deletes an unclaimed item.

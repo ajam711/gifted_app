@@ -4,7 +4,9 @@
   {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
   {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
   {% if item.giver_note %}<p class="note">{{ item.giver_note }}</p>{% endif %}
-  {% if item.claim_released_at and item.reaction == "disliked" %}
+  {% if item.claim_released_at and item.received_at and not item.given_at %}
+    <p class="notice">{{ partner.name }} got this from someone else after you claimed it, so your claim was released.</p>
+  {% elif item.claim_released_at and item.reaction == "disliked" %}
     <p class="notice">{{ partner.name }} said no to this after you claimed it, so your claim was released.</p>
   {% endif %}
   {% if actions == "open" %}
@@ -18,14 +20,18 @@
     </form>
   {% elif actions == "yours" %}
     <div class="react-actions">
-      <form method="post" action="{% url 'give_item' item.id %}"
-            hx-post="{% url 'give_item' item.id %}"
-            hx-target="main"
-            hx-select="main"
-            hx-swap="outerHTML">
-        {% csrf_token %}
-        <button type="submit" class="button">Mark given</button>
-      </form>
+      <details class="confirm">
+        <summary class="button">Mark given</summary>
+        <form method="post" action="{% url 'give_item' item.id %}" class="confirm-body"
+              hx-post="{% url 'give_item' item.id %}"
+              hx-target="main"
+              hx-select="main"
+              hx-swap="outerHTML">
+          {% csrf_token %}
+          <p>Only confirm once {{ partner.name }} has it. It will show up in {{ partner.name }}'s Received list right away, from you.</p>
+          <button type="submit" class="button">{{ partner.name }} has it</button>
+        </form>
+      </details>
       <form method="post" action="{% url 'unclaim_item' item.id %}"
             hx-post="{% url 'unclaim_item' item.id %}"
             hx-target="main"
@@ -37,5 +43,7 @@
     </div>
   {% elif actions == "given" %}
     <p class="meta">Given {{ item.given_at|date:"j M Y" }}</p>
+  {% elif actions == "elsewhere" %}
+    <p class="meta">{% if item.received_from %}From {{ item.received_from }} · {% endif %}{{ item.received_at|date:"j M Y" }}</p>
   {% endif %}
 </article>

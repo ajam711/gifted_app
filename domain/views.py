@@ -12,7 +12,7 @@ Projection copies a list of fields
 
 Derived states are functions
     ``needs_reaction``, ``liked_open``, ``claimed``, ``given``,
-    ``disliked`` are predicates over columns. Putting them on the row as
+    ``received``, ``disliked`` are predicates over columns. Putting them on the row as
     ``status`` would go stale and would leak through owner serialization.
 """
 
@@ -33,6 +33,10 @@ class OwnerItemView:
     are not present *at all* — not ``None``, not omitted at JSON dump
     time. ``asdict(owner_view)`` therefore has the same keys before and
     after a claim, which is the secrecy test.
+
+    The received fields are the hand-over reveal. ``received_from_id``
+    is the giver only once the shopper has marked it given; before that
+    it is ``None`` whatever the claim state.
     """
 
     id: int
@@ -43,6 +47,9 @@ class OwnerItemView:
     added_by_id: int
     created_at: datetime
     reaction: Literal["liked", "disliked"] | None
+    received_at: datetime | None
+    received_from_id: int | None
+    received_from: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +58,8 @@ class ShopperItemView:
 
     Same public fields as the owner view, plus the five shopper-only
     columns used for claim / "yours" / given-before history and the
-    "your claim was released" notice.
+    "your claim was released" notice. The received fields tell them the
+    owner already has it.
     """
 
     id: int
@@ -67,6 +75,8 @@ class ShopperItemView:
     claimed_at: datetime | None
     given_at: datetime | None
     claim_released_at: datetime | None
+    received_at: datetime | None
+    received_from: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,17 +100,17 @@ def needs_reaction(item: Item) -> bool:
     return (
         item.added_by_id != item.owner_id
         and item.reaction is None
-        and item.given_at is None
+        and item.received_at is None
     )
 
 
 def liked_open(item: Item) -> bool:
-    """Liked, not claimed, not given — the only state the partner may claim."""
+    """Liked, not claimed, not received — the only state the partner may claim."""
 
     return (
         item.reaction == "liked"
         and item.claimed_by_id is None
-        and item.given_at is None
+        and item.received_at is None
     )
 
 
@@ -114,6 +124,12 @@ def given(item: Item) -> bool:
     """Already given. Stays on the list as history so gifts are not repeated."""
 
     return item.given_at is not None
+
+
+def received(item: Item) -> bool:
+    """The owner has it: given by the partner, or got it elsewhere."""
+
+    return item.received_at is not None
 
 
 def disliked(item: Item) -> bool:
@@ -134,6 +150,10 @@ def to_owner_view(item: Item) -> OwnerItemView:
         added_by_id=item.added_by_id,
         created_at=item.created_at,
         reaction=item.reaction,
+        received_at=item.received_at,
+        # The giver is revealed at hand-over and not before.
+        received_from_id=item.claimed_by_id if item.given_at is not None else None,
+        received_from=item.received_from,
     )
 
 
@@ -154,6 +174,8 @@ def to_shopper_view(item: Item) -> ShopperItemView:
         claimed_at=item.claimed_at,
         given_at=item.given_at,
         claim_released_at=item.claim_released_at,
+        received_at=item.received_at,
+        received_from=item.received_from,
     )
 
 

@@ -41,26 +41,35 @@ def home(request):
 
 def _grouped_owner_items(
     items: list[OwnerItemView],
-) -> tuple[list[OwnerItemView], list[OwnerItemView], list[OwnerItemView]]:
-    """Pending, liked, disliked — groups are derived from ``reaction``, not a status column."""
+) -> tuple[
+    list[OwnerItemView], list[OwnerItemView], list[OwnerItemView], list[OwnerItemView]
+]:
+    """Pending, liked, disliked, received — derived from the row, not a status column.
+
+    Received comes first: once the owner has it, it leaves the other groups.
+    """
 
     pending: list[OwnerItemView] = []
     liked: list[OwnerItemView] = []
     disliked: list[OwnerItemView] = []
+    received: list[OwnerItemView] = []
     for item in items:
-        if item.reaction is None:
+        if item.received_at is not None:
+            received.append(item)
+        elif item.reaction is None:
             pending.append(item)
         elif item.reaction == "liked":
             liked.append(item)
         else:
             disliked.append(item)
-    return pending, liked, disliked
+    received.sort(key=lambda item: item.received_at, reverse=True)
+    return pending, liked, disliked, received
 
 
 @person_required
 def my_list(request):
     store = DjangoStore()
-    pending, liked, disliked = _grouped_owner_items(
+    pending, liked, disliked, received = _grouped_owner_items(
         store.owner_items(request.person.id)
     )
     return render(
@@ -68,9 +77,11 @@ def my_list(request):
         "gifts/my_list.html",
         {
             "person": request.person,
+            "partner": _partner(store, request.person.id),
             "pending": pending,
             "liked": liked,
             "disliked": disliked,
+            "received": received,
         },
     )
 
@@ -95,6 +106,45 @@ def react_item(request, item_id: int):
     return redirect("my_list")
 
 
+def _owner_action(request, action, done: str):
+    """Receive / unreceive on My list. Same refusal shape as ``react_item``."""
+
+    try:
+        saved = action(DjangoStore())
+    except Invalid:
+        messages.error(request, "Could not save that.")
+        return redirect("my_list")
+    except Forbidden:
+        return HttpResponseForbidden("Not allowed")
+    except NotFound:
+        raise Http404("Not found") from None
+    messages.success(request, done.format(name=saved.name))
+    return redirect("my_list")
+
+
+@person_required
+@require_POST
+def receive_item(request, item_id: int):
+    """Owner got it from someone else. The giver's name is optional."""
+
+    received_from = request.POST.get("received_from") or None
+    return _owner_action(
+        request,
+        lambda store: store.receive(request.person.id, item_id, received_from),
+        "Moved {name} to Received.",
+    )
+
+
+@person_required
+@require_POST
+def unreceive_item(request, item_id: int):
+    return _owner_action(
+        request,
+        lambda store: store.unreceive(request.person.id, item_id),
+        "Moved {name} back to your list.",
+    )
+
+
 def _grouped_shopper_items(
     items: list[ShopperItemView], shopper_id: int
 ) -> dict[str, list[ShopperItemView]]:
@@ -110,10 +160,13 @@ def _grouped_shopper_items(
         "waiting": [],
         "given": [],
         "disliked": [],
+        "elsewhere": [],
     }
     for item in items:
         if item.given_at is not None:
             groups["given"].append(item)
+        elif item.received_at is not None:
+            groups["elsewhere"].append(item)
         elif item.claimed_by_id == shopper_id:
             groups["yours"].append(item)
         elif item.reaction == "liked" and item.claimed_by_id is None:
@@ -159,13 +212,15 @@ _CONFLICT_MESSAGES: dict[ConflictReason, str] = {
     "not_liked": "{partner} hasn't liked {name} yet.",
     "disliked": "{partner} no longer wants {name}. It's under Not for {partner}.",
     "given": "{name} was already marked given.",
+    "received": "{partner} already got {name} from someone else.",
 }
 
 
 def _shopper_action(request, item_id: int, action: str, done: str):
     """Claim / unclaim / give. Shopper-only, so every result goes to Their list.
 
-    ``done`` is the success message template, with ``{name}``. A
+    ``done`` is the success message template, with ``{name}`` and
+    ``{partner}``. A
     ``Conflict`` says why, and the item it was about is highlighted.
     ``Forbidden`` is only reachable by the owner typing a URL by hand;
     it gets one generic message whatever the item's state.
@@ -190,7 +245,8 @@ def _shopper_action(request, item_id: int, action: str, done: str):
         return redirect("their_list")
     except NotFound:
         raise Http404("Not found") from None
-    messages.success(request, done.format(name=saved.name))
+    partner = _partner(store, request.person.id)
+    messages.success(request, done.format(name=saved.name, partner=partner.name))
     return redirect(their_list_url)
 
 
@@ -209,7 +265,12 @@ def unclaim_item(request, item_id: int):
 @person_required
 @require_POST
 def give_item(request, item_id: int):
-    return _shopper_action(request, item_id, "give", "Marked {name} as given.")
+    return _shopper_action(
+        request,
+        item_id,
+        "give",
+        "Gave {name} to {partner}. It's in {partner}'s Received list now.",
+    )
 
 
 @person_required

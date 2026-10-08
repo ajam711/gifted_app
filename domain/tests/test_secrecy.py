@@ -9,6 +9,7 @@ from dataclasses import asdict
 
 from domain.errors import Forbidden, Invalid
 from domain.tests.harness import (
+    NOW,
     SHOPPER_ONLY_FIELDS,
     DomainTestCase,
     owner_payload,
@@ -43,16 +44,52 @@ class SecrecyTests(DomainTestCase):
         self.assertEqual(before_detail, after_detail)
         self.assertTrue(SHOPPER_ONLY_FIELDS.isdisjoint(after_detail))
 
-    def test_owner_payload_still_identical_after_give(self) -> None:
-        """Give is also shopper-only. Owner JSON must not change then either."""
+    def test_give_is_the_hand_over_reveal(self) -> None:
+        """Owner JSON is unchanged by the claim; give then shows it received from Bea."""
 
         store, ada, bea = two_people()
         view = store.add_item(ada.id, ada.id, "Scarf")
         before = owner_payload(store.owner_items(ada.id))
         store.claim(bea.id, view.id)
+        self.assertEqual(before, owner_payload(store.owner_items(ada.id)))
+
         store.give(bea.id, view.id)
-        after = owner_payload(store.owner_items(ada.id))
-        self.assertEqual(before, after)
+        owner = store.owner_item(ada.id, view.id)
+        self.assertEqual(owner.received_at, NOW)
+        self.assertEqual(owner.received_from_id, bea.id)
+        self.assertIsNone(owner.received_from)
+        self.assertTrue(SHOPPER_ONLY_FIELDS.isdisjoint(asdict(owner)))
+
+    def test_receive_elsewhere_looks_the_same_claimed_or_not(self) -> None:
+        """"Got it elsewhere" on a claimed item cannot tell the owner it was claimed."""
+
+        store, ada, bea = two_people()
+        open_item = store.add_item(ada.id, ada.id, "A")
+        claimed_item = store.add_item(ada.id, ada.id, "A")
+        store.claim(bea.id, claimed_item.id)
+        a = asdict(store.receive(ada.id, open_item.id, "Grandma"))
+        b = asdict(store.receive(ada.id, claimed_item.id, "Grandma"))
+        a.pop("id")
+        b.pop("id")
+        self.assertEqual(a, b)
+        self.assertIsNone(b["received_from_id"])
+        listed = {item.id: asdict(item) for item in store.owner_items(ada.id)}
+        listed[open_item.id].pop("id")
+        listed[claimed_item.id].pop("id")
+        self.assertEqual(listed[open_item.id], listed[claimed_item.id])
+
+    def test_receive_refusals_are_silent(self) -> None:
+        store, ada, bea = two_people()
+        given_item = store.add_item(ada.id, ada.id, "Given")
+        store.claim(bea.id, given_item.id)
+        store.give(bea.id, given_item.id)
+        for action in (
+            lambda: store.receive(ada.id, given_item.id),
+            lambda: store.unreceive(ada.id, given_item.id),
+        ):
+            with self.assertRaises(Invalid) as ctx:
+                action()
+            self.assert_silent(ctx.exception)
 
     def test_owner_view_never_has_shopper_keys(self) -> None:
         """Keys absent, not present-and-null. Shopper still sees the note."""

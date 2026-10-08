@@ -47,9 +47,19 @@
         </ul>
       </section>
     {% endif %}
+    {% if elsewhere %}
+      <section class="item-group" aria-labelledby="elsewhere-heading">
+        <h2 id="elsewhere-heading" class="group-title">{{ partner.name }} already has</h2>
+        <ul class="items">
+          {% for item in elsewhere %}
+            <li>{% include "gifts/_shopper_item.html" with actions="elsewhere" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
     {% if given %}
       <section class="item-group" aria-labelledby="given-heading">
-        <h2 id="given-heading" class="group-title">Given before</h2>
+        <h2 id="given-heading" class="group-title">Gifts given to {{ partner.name }}</h2>
         <ul class="items">
           {% for item in given %}
             <li>{% include "gifts/_shopper_item.html" with actions="given" %}</li>

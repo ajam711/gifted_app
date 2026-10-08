@@ -6,7 +6,7 @@
     <h1>Your list</h1>
     <a class="button" href="{% url 'add_my_item' %}">Add item</a>
   </div>
-  {% if pending or liked or disliked %}
+  {% if pending or liked or disliked or received %}
     {% if pending %}
       <section class="item-group" aria-labelledby="pending-heading">
         <h2 id="pending-heading" class="group-title">Needs a reaction</h2>
@@ -32,6 +32,16 @@
         <h2 id="disliked-heading" class="group-title">Disliked</h2>
         <ul class="items">
           {% for item in disliked %}
+            <li>{% include "gifts/_owner_item.html" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    {% if received %}
+      <section class="item-group" aria-labelledby="received-heading">
+        <h2 id="received-heading" class="group-title">Received</h2>
+        <ul class="items">
+          {% for item in received %}
             <li>{% include "gifts/_owner_item.html" %}</li>
           {% endfor %}
         </ul>

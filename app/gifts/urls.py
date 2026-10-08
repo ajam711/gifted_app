@@ -7,6 +7,12 @@ urlpatterns = [
     path("my-list/", views.my_list, name="my_list"),
     path("my-list/add/", views.add_item, {"list_key": "mine"}, name="add_my_item"),
     path("my-list/<int:item_id>/react/", views.react_item, name="react_item"),
+    path("my-list/<int:item_id>/receive/", views.receive_item, name="receive_item"),
+    path(
+        "my-list/<int:item_id>/unreceive/",
+        views.unreceive_item,
+        name="unreceive_item",
+    ),
     path("their-list/", views.their_list, name="their_list"),
     path(
         "their-list/add/",

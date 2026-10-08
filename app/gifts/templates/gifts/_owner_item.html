@@ -3,17 +3,48 @@
   {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
   {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
   {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
-  <form method="post" action="{% url 'react_item' item.id %}" class="react-actions"
-        hx-post="{% url 'react_item' item.id %}"
-        hx-target="main"
-        hx-select="main"
-        hx-swap="outerHTML">
-    {% csrf_token %}
-    {% if item.reaction != "liked" %}
-      <button type="submit" name="reaction" value="liked" class="button">Like</button>
+  {% if item.received_at %}
+    <p class="meta">
+      {% if item.received_from_id and partner and item.received_from_id == partner.id %}From {{ partner.name }} · {% elif item.received_from %}From {{ item.received_from }} · {% endif %}{{ item.received_at|date:"j M Y" }}
+    </p>
+    {% if not item.received_from_id %}
+      <form method="post" action="{% url 'unreceive_item' item.id %}" class="react-actions"
+            hx-post="{% url 'unreceive_item' item.id %}"
+            hx-target="main"
+            hx-select="main"
+            hx-swap="outerHTML">
+        {% csrf_token %}
+        <button type="submit" class="button button-quiet">Undo</button>
+      </form>
     {% endif %}
-    {% if item.reaction != "disliked" %}
-      <button type="submit" name="reaction" value="disliked" class="button button-quiet">Dislike</button>
-    {% endif %}
-  </form>
+  {% else %}
+    <div class="react-actions">
+      <form method="post" action="{% url 'react_item' item.id %}" class="inline-form"
+            hx-post="{% url 'react_item' item.id %}"
+            hx-target="main"
+            hx-select="main"
+            hx-swap="outerHTML">
+        {% csrf_token %}
+        {% if item.reaction != "liked" %}
+          <button type="submit" name="reaction" value="liked" class="button">Like</button>
+        {% endif %}
+        {% if item.reaction != "disliked" %}
+          <button type="submit" name="reaction" value="disliked" class="button button-quiet">Dislike</button>
+        {% endif %}
+      </form>
+      <details class="confirm">
+        <summary class="button button-quiet">Got it elsewhere</summary>
+        <form method="post" action="{% url 'receive_item' item.id %}" class="confirm-body"
+              hx-post="{% url 'receive_item' item.id %}"
+              hx-target="main"
+              hx-select="main"
+              hx-swap="outerHTML">
+          {% csrf_token %}
+          <label for="received-from-{{ item.id }}">Who gave it? <span class="optional">(optional)</span></label>
+          <input id="received-from-{{ item.id }}" name="received_from" maxlength="100" autocomplete="off">
+          <button type="submit" class="button">Move to Received</button>
+        </form>
+      </details>
+    </div>
+  {% endif %}
 </article>

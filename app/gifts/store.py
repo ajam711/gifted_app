@@ -3,8 +3,8 @@
 Callers receive ``OwnerItemView`` / ``ShopperItemView``, never a raw ``Item``.
 Add-item construction lives in ``domain.prepare_new_item`` so the self-add
 liked rule cannot drift. React uses ``domain.prepare_reaction`` so claimed
-refusals stay generic. Claim / unclaim / give use the matching
-``domain.prepare_*`` helpers for the same reason.
+refusals stay generic. Claim / unclaim / give / receive / unreceive use
+the matching ``domain.prepare_*`` helpers for the same reason.
 
 Every mutation goes through ``_mutate``: read the row, apply the domain
 rule, then write only if the row is unchanged since the read. If the
@@ -26,7 +26,9 @@ from domain import (
     prepare_give,
     prepare_new_item,
     prepare_reaction,
+    prepare_receive,
     prepare_unclaim,
+    prepare_unreceive,
     to_owner_view,
     to_shopper_view,
 )
@@ -43,6 +45,8 @@ _STATE_COLUMNS = (
     "claimed_at",
     "given_at",
     "claim_released_at",
+    "received_at",
+    "received_from",
 )
 _MAX_ATTEMPTS = 3
 
@@ -69,6 +73,8 @@ def domain_item(row: Item) -> DomainItem:
         claimed_at=row.claimed_at,
         given_at=row.given_at,
         claim_released_at=row.claim_released_at,
+        received_at=row.received_at,
+        received_from=row.received_from,
         created_at=row.created_at,
     )
 
@@ -156,6 +162,25 @@ class DjangoStore:
             ),
         )
         return to_shopper_view(updated)
+
+    def receive(
+        self, actor_id: int, item_id: int, received_from: str | None = None
+    ) -> OwnerItemView:
+        """Owner got it from someone else. Same response, claimed or not."""
+
+        updated = self._mutate(
+            item_id,
+            lambda item: prepare_receive(item, actor_id, received_from, self._now()),
+        )
+        return to_owner_view(updated)
+
+    def unreceive(self, actor_id: int, item_id: int) -> OwnerItemView:
+        """Owner undoes a "got it elsewhere"."""
+
+        updated = self._mutate(
+            item_id, lambda item: prepare_unreceive(item, actor_id)
+        )
+        return to_owner_view(updated)
 
     def shopper_item(self, actor_id: int, item_id: int) -> ShopperItemView:
         """One item on the partner's list. Anything else is ``NotFound``."""

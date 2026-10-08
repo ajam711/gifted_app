@@ -177,8 +177,10 @@ class ClaimGiveHTTPTests(TestCase):
         self._login("bea")
         self.client.post(f"/their-list/{item.id}/claim/")
         response = self.client.post(f"/their-list/{item.id}/give/", follow=True)
-        self.assertContains(response, "Marked Watch as given.")
-        self.assertContains(response, "Given before")
+        self.assertContains(
+            response, "Gave Watch to Ada. It&#x27;s in Ada&#x27;s Received list now."
+        )
+        self.assertContains(response, "Gifts given to Ada")
         self.assertNotContains(response, "Mark given")
         self.assertNotContains(response, "Unclaim")
 
@@ -351,20 +353,30 @@ class OwnerSecrecyHTTPTests(TestCase):
             pages[path] = _CSRF.sub(b"CSRF", response.content)
         return pages
 
-    def test_owner_pages_identical_after_claim_and_give(self) -> None:
+    def test_owner_pages_identical_after_claim(self) -> None:
         item = _liked(self.ada)
         _liked(self.ada, "Kettle")
         before = self._owner_pages()
         self.shopper.post(f"/their-list/{item.id}/claim/")
         after_claim = self._owner_pages()
-        self.shopper.post(f"/their-list/{item.id}/give/")
-        after_give = self._owner_pages()
-        item.refresh_from_db()
-        self.assertIsNotNone(item.given_at)
         for path in before:
             with self.subTest(path=path):
                 self.assertEqual(before[path], after_claim[path])
-                self.assertEqual(before[path], after_give[path])
+
+    def test_give_is_the_hand_over_reveal(self) -> None:
+        """Only once Bea confirms the hand-over does Ada see it, from Bea."""
+
+        item = _liked(self.ada)
+        self.shopper.post(f"/their-list/{item.id}/claim/")
+        before = self.owner.get("/my-list/")
+        self.assertNotContains(before, 'id="received-heading"')
+        self.assertNotContains(before, "From Bea")
+        self.shopper.post(f"/their-list/{item.id}/give/")
+        after = self.owner.get("/my-list/")
+        self.assertContains(after, 'id="received-heading"')
+        self.assertContains(after, "From Bea")
+        self.assertNotContains(after, f'action="/my-list/{item.id}/react/"')
+        self.assertNotContains(after, f'action="/my-list/{item.id}/unreceive/"')
 
     def test_owner_refusals_do_not_depend_on_claim_state(self) -> None:
         """Ada probing her own items gets the same answer, claimed or not."""
@@ -405,6 +417,7 @@ class OwnerSecrecyHTTPTests(TestCase):
             )
             self.assertContains(response, "Saved Same.")
             body = _CSRF.sub(b"CSRF", response.content)
-            return body.replace(f"/my-list/{item.id}/".encode(), b"/my-list/ID/")
+            body = body.replace(f"/my-list/{item.id}/".encode(), b"/my-list/ID/")
+            return body.replace(f"-{item.id}\"".encode(), b'-ID"')
 
         self.assertEqual(dislike_page(claim_first=False), dislike_page(claim_first=True))

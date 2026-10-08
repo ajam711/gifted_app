@@ -45,6 +45,10 @@ OWNER_VIEW_FIELDS = {
     "added_by_id",
     "created_at",
     "reaction",
+    # The hand-over reveal. Null until the owner has the gift.
+    "received_at",
+    "received_from_id",
+    "received_from",
 }
 
 SHOPPER_ONLY_FIELDS = {

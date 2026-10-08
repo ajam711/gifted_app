@@ -80,6 +80,7 @@ ConflictReason = Literal[
     "not_liked",  # owner has not reacted yet
     "disliked",  # owner said no
     "given",  # already marked given
+    "received",  # owner already got it from someone else
 ]
 
 

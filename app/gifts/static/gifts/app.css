@@ -107,6 +107,37 @@ h3 { font-size: 1.15rem; margin: 0 0 0.35rem; }
   font-size: 0.95rem;
 }
 
+.inline-form { display: contents; }
+
+/* A button that opens a confirm step in place. No JavaScript: <details>. */
+.confirm > summary { list-style: none; }
+.confirm > summary::-webkit-details-marker { display: none; }
+.confirm[open] { flex-basis: 100%; }
+.confirm[open] > summary { opacity: 0.6; }
+
+.confirm-body {
+  margin: 0.6rem 0 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--bg);
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+
+.confirm-body p { margin: 0; }
+
+.confirm-body input {
+  width: 100%;
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--card);
+  color: inherit;
+}
+
 a:focus-visible,
 .button:focus-visible,
 input:focus-visible,
