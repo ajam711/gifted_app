@@ -6,7 +6,7 @@ Product contract: [V1.md](V1.md). Read that before writing code.
 
 ## Status
 
-Domain layer is in `domain/` (dataclasses, in-memory store, tests). The Django app is in `app/`: session login, Home doors, My list / Their list, Add item, owner react and "got it elsewhere", partner claim / unclaim / give (a confirmed hand-over that moves the gift to the owner's Received list), against SQLite. Deploys to Railway (below). Home badges are not in this slice.
+Domain layer is in `domain/` (dataclasses, in-memory store, tests). The Django app is in `app/`: session login, Home doors and badges, My list / Their list, Add item, owner react and "got it elsewhere", partner claim / unclaim / give (a confirmed hand-over that moves the gift to the owner's Received list), against SQLite. Deploys to Railway (below). Home badges are "N need you" (suggestions waiting on your list) and the partner's next important date ("Birthday in 12 days").
 
 ## Setup
 

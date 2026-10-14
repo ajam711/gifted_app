@@ -14,13 +14,20 @@ Derived states are functions
     ``needs_reaction``, ``liked_open``, ``claimed``, ``given``,
     ``received``, ``disliked`` are predicates over columns. Putting them on the row as
     ``status`` would go stale and would leak through owner serialization.
+
+Home badges
+    ``HomeBadges`` is the owner's Home payload: a count of
+    ``needs_reaction`` rows, and the partner's next date. It has no
+    claim fields. The count uses ``needs_reaction``, which does not
+    read ``claimed_by_id``.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 
-from domain.models import Item
+from domain.models import ImportantDate, Item
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,11 +91,26 @@ class UpcomingDate:
     """Home badge: next ``ImportantDate`` for the other person.
 
     ``days`` is ``(on - today).days``, so 12 means "Birthday in 12 days".
+    The displayed sentence is ``f"{label} in {days} days"``.
     """
 
     label: str
     on: date
     days: int
+
+
+@dataclass(frozen=True, slots=True)
+class HomeBadges:
+    """What Home may tell the viewer. Counts and a date, nothing else.
+
+    ``needs_you`` is how many of *my* items are ``needs_reaction``.
+    ``upcoming`` is the partner's next date, or ``None`` when they have
+    none (or there is no partner). Claim columns are not fields here,
+    so a claim cannot change this object's keys or, by itself, its values.
+    """
+
+    needs_you: int
+    upcoming: UpcomingDate | None
 
 
 def needs_reaction(item: Item) -> bool:
@@ -205,3 +227,21 @@ def occurrence_on_or_after(month: int, day: int, year: int | None, on: date) -> 
         if occ >= on:
             return occ
     return None
+
+
+def soonest_upcoming(records: Iterable[ImportantDate], on: date) -> UpcomingDate | None:
+    """Earliest occurrence on or after ``on``.
+
+    The caller passes one person's dates (the partner's). This function
+    does not look anyone up. Two dates on the same day keep the earlier
+    record, so insertion order is the tie-break.
+    """
+
+    best: UpcomingDate | None = None
+    for record in records:
+        occ = occurrence_on_or_after(record.month, record.day, record.year, on)
+        if occ is None:
+            continue
+        if best is None or occ < best.on:
+            best = UpcomingDate(label=record.label, on=occ, days=(occ - on).days)
+    return best

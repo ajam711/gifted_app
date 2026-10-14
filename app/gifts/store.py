@@ -1,7 +1,8 @@
 """Django-backed store. Same method names and view return types as InMemoryStore.
 
-Callers receive ``OwnerItemView`` / ``ShopperItemView``, never a raw ``Item``.
-Add-item construction lives in ``domain.prepare_new_item`` so the self-add
+Callers receive ``OwnerItemView``, ``ShopperItemView``, or ``HomeBadges``,
+never a raw ``Item``. Add-item construction lives in
+``domain.prepare_new_item`` so the self-add
 liked rule cannot drift. React uses ``domain.prepare_reaction`` so claimed
 refusals stay generic. Claim / unclaim / give / receive / unreceive use
 the matching ``domain.prepare_*`` helpers for the same reason.
@@ -14,14 +15,18 @@ state, never a mix of two requests.
 """
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from domain import (
     Forbidden,
+    HomeBadges,
+    ImportantDate as DomainImportantDate,
     Invalid,
     NotFound,
     OwnerItemView,
     ShopperItemView,
+    UpcomingDate,
+    needs_reaction,
     prepare_claim,
     prepare_give,
     prepare_new_item,
@@ -29,12 +34,13 @@ from domain import (
     prepare_receive,
     prepare_unclaim,
     prepare_unreceive,
+    soonest_upcoming,
     to_owner_view,
     to_shopper_view,
 )
 from domain.models import Item as DomainItem
 
-from gifts.models import Connection, Item, Person
+from gifts.models import Connection, ImportantDate, Item, Person
 
 
 # Columns a mutation can change. Every save checks they are unchanged since the read.
@@ -200,6 +206,49 @@ class DjangoStore:
         owner_id = self.partner_id(actor_id)
         rows = Item.objects.filter(owner_id=owner_id).order_by("created_at", "id")
         return [to_shopper_view(domain_item(row)) for row in rows]
+
+    def needs_reaction_count(self, owner_id: int) -> int:
+        """Home badge: "N need you" — pending suggestions on *my* list.
+
+        The predicate is ``needs_reaction``, which does not read claim
+        columns. The return value is the count alone.
+        """
+
+        self._require_person(owner_id)
+        return sum(
+            1
+            for row in Item.objects.filter(owner_id=owner_id)
+            if needs_reaction(domain_item(row))
+        )
+
+    def next_partner_important_date(
+        self, viewer_id: int, on: date
+    ) -> UpcomingDate | None:
+        """Soonest upcoming date for the partner, via ``Connection``."""
+
+        partner = self.partner_id(viewer_id)
+        records = [
+            DomainImportantDate(
+                person_id=row.person_id,
+                label=row.label,
+                month=row.month,
+                day=row.day,
+                year=row.year,
+            )
+            for row in ImportantDate.objects.filter(person_id=partner).order_by("id")
+        ]
+        return soonest_upcoming(records, on)
+
+    def home_badges(self, viewer_id: int, on: date) -> HomeBadges:
+        """Owner Home payload. No partner means no date badge."""
+
+        upcoming = None
+        if self._partner_id_or_none(viewer_id) is not None:
+            upcoming = self.next_partner_important_date(viewer_id, on)
+        return HomeBadges(
+            needs_you=self.needs_reaction_count(viewer_id),
+            upcoming=upcoming,
+        )
 
     def _require_person(self, person_id: int) -> Person:
         try:

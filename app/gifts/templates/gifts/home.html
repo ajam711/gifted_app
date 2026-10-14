@@ -6,11 +6,17 @@
     <a class="door" href="{% url 'my_list' %}">
       <span class="door-kicker">Your list</span>
       <span class="door-name">{{ person.name }}</span>
+      {% if badges.needs_you %}
+        <span class="badge">{{ badges.needs_you }} need you</span>
+      {% endif %}
     </a>
     {% if partner %}
       <a class="door" href="{% url 'their_list' %}">
         <span class="door-kicker">Their list</span>
         <span class="door-name">{{ partner.name }}</span>
+        {% if badges.upcoming %}
+          <span class="badge">{{ badges.upcoming.label }} in {{ badges.upcoming.days }} days</span>
+        {% endif %}
       </a>
     {% endif %}
   </nav>

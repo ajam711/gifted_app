@@ -5,7 +5,9 @@ not in an exception attribute. If you change projection or error
 handling, this file is the one that should go red.
 """
 
-from dataclasses import asdict
+import json
+from dataclasses import asdict, fields
+from datetime import date
 
 from domain.errors import Forbidden, Invalid
 from domain.tests.harness import (
@@ -15,6 +17,7 @@ from domain.tests.harness import (
     owner_payload,
     two_people,
 )
+from domain.views import HomeBadges, UpcomingDate
 
 
 class SecrecyTests(DomainTestCase):
@@ -111,16 +114,69 @@ class SecrecyTests(DomainTestCase):
         self.assertEqual(shopper["claimed_by_id"], bea.id)
 
     def test_claim_does_not_change_owner_counts(self) -> None:
-        """A claim must not drop the item from my list or change "N need you"."""
+        """A claim must not drop the item from my list or change "N need you".
+
+        The count is non-zero: a pending suggestion sits next to the liked
+        item Bea claims. If the badge counted unclaimed rows, it would drop.
+        """
 
         store, ada, bea = two_people()
         first = store.add_item(ada.id, ada.id, "A")
         store.add_item(ada.id, ada.id, "B")
+        store.add_item(bea.id, ada.id, "Suggestion")
         before = len(store.owner_items(ada.id))
         before_need = store.needs_reaction_count(ada.id)
+        self.assertEqual(before_need, 1)
         store.claim(bea.id, first.id)
         self.assertEqual(len(store.owner_items(ada.id)), before)
         self.assertEqual(store.needs_reaction_count(ada.id), before_need)
+
+    def test_home_badges_identical_before_and_after_claim(self) -> None:
+        """Badge payload keys, values, and byte size ignore claim state.
+
+        "N need you" counts ``needs_reaction`` on my list. A liked item
+        Bea claims, then releases, is not one of those. The date badge is
+        the partner's next ``ImportantDate`` and has no claim fields.
+        """
+
+        store, ada, bea = two_people()
+        on = date(2026, 9, 3)
+        store.add_important_date(bea.id, "Birthday", month=9, day=15)
+        store.add_important_date(ada.id, "Ada day", month=9, day=4)
+        store.add_item(bea.id, ada.id, "Suggestion")
+        store.add_item(ada.id, bea.id, "On Bea's list")
+        liked = store.add_item(ada.id, ada.id, "Liked")
+
+        def payload() -> str:
+            badges = store.home_badges(ada.id, on)
+            return json.dumps(
+                asdict(badges),
+                default=lambda value: value.isoformat(),
+                sort_keys=True,
+            )
+
+        before = payload()
+        self.assertEqual(store.home_badges(ada.id, on).needs_you, 1)
+        self.assertEqual(store.home_badges(ada.id, on).upcoming.days, 12)
+        store.claim(bea.id, liked.id)
+        after_claim = payload()
+        store.unclaim(bea.id, liked.id)
+        after_unclaim = payload()
+
+        self.assertEqual(before, after_claim)
+        self.assertEqual(before, after_unclaim)
+        self.assertEqual(len(before.encode()), len(after_claim.encode()))
+        decoded = json.loads(before)
+        self.assertEqual(set(decoded), {"needs_you", "upcoming"})
+        self.assertTrue(SHOPPER_ONLY_FIELDS.isdisjoint(decoded["upcoming"]))
+        self.assertEqual(
+            {field.name for field in fields(HomeBadges)},
+            {"needs_you", "upcoming"},
+        )
+        self.assertEqual(
+            {field.name for field in fields(UpcomingDate)},
+            {"label", "on", "days"},
+        )
 
     def test_owner_claim_attempt_returns_no_item(self) -> None:
         """If claim() returned the row to the owner, secrecy is already gone."""

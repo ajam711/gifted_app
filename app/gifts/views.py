@@ -2,6 +2,7 @@ from django.contrib import messages
 from django.http import Http404, HttpResponseForbidden
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from domain import (
@@ -32,10 +33,13 @@ def _partner(store: DjangoStore, person_id: int) -> Person | None:
 def home(request):
     store = DjangoStore()
     partner = _partner(store, request.person.id)
+    # Badges come from the domain payload: a needs-reaction count and the
+    # partner's next date. Neither value is derived from claim columns.
+    badges = store.home_badges(request.person.id, timezone.localdate())
     return render(
         request,
         "gifts/home.html",
-        {"person": request.person, "partner": partner},
+        {"person": request.person, "partner": partner, "badges": badges},
     )
 
 

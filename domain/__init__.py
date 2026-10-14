@@ -32,6 +32,7 @@ from domain.store import (
     prepare_unreceive,
 )
 from domain.views import (
+    HomeBadges,
     OwnerItemView,
     ShopperItemView,
     UpcomingDate,
@@ -41,6 +42,7 @@ from domain.views import (
     liked_open,
     needs_reaction,
     received,
+    soonest_upcoming,
     to_owner_view,
     to_shopper_view,
 )
@@ -52,6 +54,7 @@ __all__ = [
     "Connection",
     "DomainError",
     "Forbidden",
+    "HomeBadges",
     "ImportantDate",
     "InMemoryStore",
     "Invalid",
@@ -75,6 +78,7 @@ __all__ = [
     "liked_open",
     "needs_reaction",
     "received",
+    "soonest_upcoming",
     "to_owner_view",
     "to_shopper_view",
 ]
