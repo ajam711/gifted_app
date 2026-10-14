@@ -24,12 +24,13 @@ from datetime import date, datetime, timezone
 from domain.errors import Conflict, ConflictReason, Forbidden, Invalid, NotFound
 from domain.models import Connection, ImportantDate, Item, Person, Reaction
 from domain.views import (
+    HomeBadges,
     OwnerItemView,
     ShopperItemView,
     UpcomingDate,
     liked_open,
     needs_reaction,
-    occurrence_on_or_after,
+    soonest_upcoming,
     to_owner_view,
     to_shopper_view,
 )
@@ -332,17 +333,25 @@ class InMemoryStore:
         """
 
         partner = self.partner_id(viewer_id)
-        best: UpcomingDate | None = None
-        for record in self._dates:
-            if record.person_id != partner:
-                continue
-            occ = occurrence_on_or_after(record.month, record.day, record.year, on)
-            if occ is None:
-                continue
-            days = (occ - on).days
-            if best is None or occ < best.on:
-                best = UpcomingDate(label=record.label, on=occ, days=days)
-        return best
+        return soonest_upcoming(
+            (record for record in self._dates if record.person_id == partner),
+            on,
+        )
+
+    def home_badges(self, viewer_id: int, on: date) -> HomeBadges:
+        """Owner Home payload: "N need you" and the partner's next date.
+
+        No partner means no date badge. The count is still the viewer's
+        own ``needs_reaction`` rows. Claim state is not an input.
+        """
+
+        upcoming = None
+        if self._partner_id_or_none(viewer_id) is not None:
+            upcoming = self.next_partner_important_date(viewer_id, on)
+        return HomeBadges(
+            needs_you=self.needs_reaction_count(viewer_id),
+            upcoming=upcoming,
+        )
 
     def add_item(
         self,
