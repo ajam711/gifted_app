@@ -53,7 +53,7 @@ class Connection(models.Model):
 
 
 class ImportantDate(models.Model):
-    """Recurring or one-off date for the Home badge. Not used in this slice."""
+    """Recurring or one-off date. Home shows the partner's next one."""
 
     person = models.ForeignKey(
         Person, on_delete=models.CASCADE, related_name="important_dates"

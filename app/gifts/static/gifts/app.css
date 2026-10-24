@@ -184,6 +184,16 @@ button:focus-visible {
   margin-top: 0.15rem;
 }
 
+.badge {
+  display: inline-block;
+  margin-top: 0.55rem;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
 .items { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; }
 
 .item {
