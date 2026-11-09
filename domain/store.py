@@ -81,6 +81,60 @@ def prepare_new_item(
     }
 
 
+def _clean_optional(value: str | None) -> str | None:
+    """Strip an optional text field. Blank becomes ``None``."""
+
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def prepare_edit(
+    item: Item,
+    actor_id: int,
+    name: str,
+    *,
+    actor_can_shop: bool,
+    url: str | None = None,
+    price_text: str | None = None,
+    tag: str | None = None,
+    giver_note: str | None = None,
+    update_giver_note: bool = False,
+) -> Item:
+    """Replacement row after the person who added the item edits its text.
+
+    Only ``added_by_id`` may edit. Checked first, before any claim column
+    is read, so the refusal cannot depend on a claim. If that person is
+    not the list owner, they must still be able to shop the list
+    (``can_shop``).
+
+    Writes name, link, price and tag. A shopper edit
+    (``update_giver_note``, and the actor is not the owner) may also
+    replace ``giver_note``. An owner edit never writes that note.
+    Reaction, claim and received columns are copied through unchanged,
+    so the owner's result cannot reveal a claim.
+    """
+
+    if item.added_by_id != actor_id:
+        raise Forbidden()
+    if item.owner_id != actor_id and not actor_can_shop:
+        raise Forbidden()
+    cleaned = name.strip()
+    if not cleaned:
+        raise Invalid("Name is required")
+    updated = replace(
+        item,
+        name=cleaned,
+        url=_clean_optional(url),
+        price_text=_clean_optional(price_text),
+        tag=_clean_optional(tag),
+    )
+    if update_giver_note and actor_id != item.owner_id:
+        updated = replace(updated, giver_note=_clean_optional(giver_note))
+    return updated
+
+
 def prepare_reaction(
     item: Item,
     actor_id: int,
@@ -396,6 +450,44 @@ class InMemoryStore:
         if actor_id == owner_id:
             return to_owner_view(item)
         return to_shopper_view(item)
+
+    def edit_item(
+        self,
+        actor_id: int,
+        item_id: int,
+        name: str,
+        *,
+        url: str | None = None,
+        price_text: str | None = None,
+        tag: str | None = None,
+        giver_note: str | None = None,
+        update_giver_note: bool = False,
+    ) -> OwnerItemView | ShopperItemView:
+        """Edit an item the actor added.
+
+        List owner (who added it) gets ``OwnerItemView``: no private note,
+        no claim fields. A shopper who added it, and who can still shop
+        that list, gets ``ShopperItemView``. Anyone else → ``Forbidden``,
+        with the same error claimed or not.
+        """
+
+        self._require_person(actor_id)
+        item = self._require_item(item_id)
+        updated = prepare_edit(
+            item,
+            actor_id,
+            name,
+            actor_can_shop=self._is_partner(actor_id, item.owner_id),
+            url=url,
+            price_text=price_text,
+            tag=tag,
+            giver_note=giver_note,
+            update_giver_note=update_giver_note,
+        )
+        self._items[item.id] = updated
+        if actor_id == updated.owner_id:
+            return to_owner_view(updated)
+        return to_shopper_view(updated)
 
     def react(self, actor_id: int, item_id: int, reaction: Reaction) -> OwnerItemView:
         """Owner sets liked or disliked.

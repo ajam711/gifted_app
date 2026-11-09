@@ -3,6 +3,9 @@
   {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
   {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
   {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
+  {% if item.added_by_id == person.id %}
+    <p class="meta"><a href="{% url 'edit_my_item' item.id %}">Edit</a></p>
+  {% endif %}
   {% if item.received_at %}
     <p class="meta">
       {% if item.received_from_id and partner and item.received_from_id == partner.id %}From {{ partner.name }} · {% elif item.received_from %}From {{ item.received_from }} · {% endif %}{{ item.received_at|date:"j M Y" }}

@@ -1,11 +1,12 @@
 """Django-backed store. Same method names and view return types as InMemoryStore.
 
 Callers receive ``OwnerItemView``, ``ShopperItemView``, or ``HomeBadges``,
-never a raw ``Item``. Add-item construction lives in
-``domain.prepare_new_item`` so the self-add
-liked rule cannot drift. React uses ``domain.prepare_reaction`` so claimed
-refusals stay generic. Claim / unclaim / give / receive / unreceive use
-the matching ``domain.prepare_*`` helpers for the same reason.
+never a raw ``Item``. Add-item and edit construction live in
+``domain.prepare_new_item`` and ``domain.prepare_edit`` so the self-add
+liked rule and the adder-only edit rule cannot drift. React uses
+``domain.prepare_reaction`` so claimed refusals stay generic. Claim /
+unclaim / give / receive / unreceive use the matching ``domain.prepare_*``
+helpers for the same reason.
 
 Every mutation goes through ``_mutate``: read the row, apply the domain
 rule, then write only if the row is unchanged since the read. If the
@@ -28,6 +29,7 @@ from domain import (
     UpcomingDate,
     needs_reaction,
     prepare_claim,
+    prepare_edit,
     prepare_give,
     prepare_new_item,
     prepare_reaction,
@@ -43,7 +45,9 @@ from domain.models import Item as DomainItem
 from gifts.models import Connection, ImportantDate, Item, Person
 
 
-# Columns a mutation can change. Every save checks they are unchanged since the read.
+# State columns a mutation can change. Claim columns stay in this list so
+# an edit, which does not write them, still notices a claim that landed
+# after the row was read and re-checks the rule against the fresh row.
 _STATE_COLUMNS = (
     "reaction",
     "reacted_at",
@@ -54,6 +58,17 @@ _STATE_COLUMNS = (
     "received_at",
     "received_from",
 )
+# Text the adder can change. Locked the same way as state: a save writes
+# only the columns that differ, and only if every lock column still
+# matches the row that was read.
+_CONTENT_COLUMNS = (
+    "name",
+    "url",
+    "price_text",
+    "tag",
+    "giver_note",
+)
+_LOCK_COLUMNS = _STATE_COLUMNS + _CONTENT_COLUMNS
 _MAX_ATTEMPTS = 3
 
 
@@ -129,6 +144,41 @@ class DjangoStore:
             return to_owner_view(item)
         return to_shopper_view(item)
 
+    def edit_item(
+        self,
+        actor_id: int,
+        item_id: int,
+        name: str,
+        *,
+        url: str | None = None,
+        price_text: str | None = None,
+        tag: str | None = None,
+        giver_note: str | None = None,
+        update_giver_note: bool = False,
+    ) -> OwnerItemView | ShopperItemView:
+        """Edit an item the actor added. Owner result has no claim fields."""
+
+        self._require_person(actor_id)
+
+        def rule(item: DomainItem) -> DomainItem:
+            return prepare_edit(
+                item,
+                actor_id,
+                name,
+                # V1 can_shop: today, a Connection to the list owner.
+                actor_can_shop=self._is_partner(actor_id, item.owner_id),
+                url=url,
+                price_text=price_text,
+                tag=tag,
+                giver_note=giver_note,
+                update_giver_note=update_giver_note,
+            )
+
+        updated = self._mutate(item_id, rule)
+        if actor_id == updated.owner_id:
+            return to_owner_view(updated)
+        return to_shopper_view(updated)
+
     def react(self, actor_id: int, item_id: int, reaction: str) -> OwnerItemView:
         updated = self._mutate(
             item_id,
@@ -187,6 +237,14 @@ class DjangoStore:
             item_id, lambda item: prepare_unreceive(item, actor_id)
         )
         return to_owner_view(updated)
+
+    def owner_item(self, actor_id: int, item_id: int) -> OwnerItemView:
+        """Item detail for the owner. Someone else's item is ``NotFound``."""
+
+        row = self._require_item_row(item_id)
+        if row.owner_id != actor_id:
+            raise NotFound()
+        return to_owner_view(domain_item(row))
 
     def shopper_item(self, actor_id: int, item_id: int) -> ShopperItemView:
         """One item on the partner's list. Anything else is ``NotFound``."""
@@ -276,9 +334,18 @@ class DjangoStore:
         for _attempt in range(_MAX_ATTEMPTS):
             row = self._require_item_row(item_id)
             updated = rule(domain_item(row))
-            read = {column: getattr(row, column) for column in _STATE_COLUMNS}
-            changes = {column: getattr(updated, column) for column in _STATE_COLUMNS}
-            if Item.objects.filter(pk=row.pk, **read).update(**changes) == 1:
+            read = {column: getattr(row, column) for column in _LOCK_COLUMNS}
+            changes = {
+                column: getattr(updated, column)
+                for column in _LOCK_COLUMNS
+                if getattr(updated, column) != read[column]
+            }
+            locked = Item.objects.filter(pk=row.pk, **read)
+            if not changes:
+                if locked.exists():
+                    return updated
+                continue
+            if locked.update(**changes) == 1:
                 return updated
         raise Invalid()
 

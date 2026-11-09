@@ -24,6 +24,7 @@ from domain.models import Connection, ImportantDate, Item, Person, Reaction
 from domain.store import (
     InMemoryStore,
     prepare_claim,
+    prepare_edit,
     prepare_give,
     prepare_new_item,
     prepare_reaction,
@@ -64,6 +65,7 @@ __all__ = [
     "Person",
     "Reaction",
     "prepare_claim",
+    "prepare_edit",
     "prepare_give",
     "prepare_new_item",
     "prepare_reaction",

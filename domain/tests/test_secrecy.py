@@ -189,6 +189,59 @@ class SecrecyTests(DomainTestCase):
         self.assert_silent(ctx.exception)
         self.assertEqual(ctx.exception.args, ("Not allowed",))
 
+    def test_edit_result_identical_claimed_or_not(self) -> None:
+        """Editing a claimed item looks the same as editing any other.
+
+        The claim stays on the row. It is not a field of the result.
+        """
+
+        store, ada, bea = two_people()
+        open_item = store.add_item(
+            ada.id,
+            ada.id,
+            "A",
+            url="https://example.com/a",
+            price_text="$1",
+            tag="Birthday",
+        )
+        claimed_item = store.add_item(
+            ada.id,
+            ada.id,
+            "A",
+            url="https://example.com/a",
+            price_text="$1",
+            tag="Birthday",
+        )
+        store.claim(bea.id, claimed_item.id)
+        a = asdict(
+            store.edit_item(
+                ada.id,
+                open_item.id,
+                "B",
+                url="https://example.com/b",
+                price_text="$2",
+                tag="Xmas",
+            )
+        )
+        b = asdict(
+            store.edit_item(
+                ada.id,
+                claimed_item.id,
+                "B",
+                url="https://example.com/b",
+                price_text="$2",
+                tag="Xmas",
+            )
+        )
+        a.pop("id")
+        b.pop("id")
+        self.assertEqual(a, b)
+        self.assertTrue(SHOPPER_ONLY_FIELDS.isdisjoint(b))
+        raw = store._items[claimed_item.id]
+        self.assertEqual(raw.name, "B")
+        self.assertEqual(raw.claimed_by_id, bea.id)
+        self.assertIsNotNone(raw.claimed_at)
+
     def test_dislike_result_identical_claimed_or_not(self) -> None:
         """Disliking always succeeds; the owner's result cannot tell a claim was released."""
 
