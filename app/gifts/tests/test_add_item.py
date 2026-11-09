@@ -82,6 +82,23 @@ class AddItemHTTPTests(TestCase):
         self.assertContains(response, "navy, not black")
         self.assertContains(response, "https://example.com/coat")
 
+    def test_product_link_opens_in_a_new_tab(self) -> None:
+        self._login("bea")
+        self.client.post(
+            "/their-list/add/",
+            {"name": "Coat", "url": "https://example.com/coat"},
+        )
+        shopper = self.client.get("/their-list/")
+        link = (
+            '<a href="https://example.com/coat" target="_blank" '
+            'rel="noopener noreferrer">Open link</a>'
+        )
+        self.assertContains(shopper, link)
+        self.client.logout()
+        self._login("ada")
+        owner = self.client.get("/my-list/")
+        self.assertContains(owner, link)
+
     def test_bare_link_gets_https(self) -> None:
         self._login("ada")
         self.client.post(
