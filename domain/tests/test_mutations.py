@@ -5,7 +5,9 @@ checks the error text, not just the exception type.
 """
 
 from domain.errors import Conflict, Forbidden, Invalid, NotFound
-from domain.tests.harness import DomainTestCase, two_people
+from domain.store import InMemoryStore
+from domain.tests.harness import NOW, DomainTestCase, two_people
+from domain.views import OwnerItemView, ShopperItemView
 
 
 class AddTests(DomainTestCase):
@@ -270,3 +272,189 @@ class DeleteTests(DomainTestCase):
         store, ada, _bea = two_people()
         with self.assertRaises(NotFound):
             store.owner_item(ada.id, 999)
+
+
+class EditTests(DomainTestCase):
+    def test_adder_edits_text_and_leaves_claim_state_alone(self) -> None:
+        """Name, link, price and tag change. A posted private note does not."""
+
+        store, ada, bea = two_people()
+        view = store.add_item(
+            ada.id,
+            ada.id,
+            "Watch",
+            url="https://example.com/a",
+            price_text="$1",
+            tag="Old",
+            giver_note="keep",
+        )
+        store.claim(bea.id, view.id)
+        before = store._items[view.id]
+        edited = store.edit_item(
+            ada.id,
+            view.id,
+            "  Watch band  ",
+            url=" https://example.com/b ",
+            price_text=" around $20 ",
+            tag=" Birthday ",
+            giver_note="nope",
+            update_giver_note=True,
+        )
+        after = store._items[view.id]
+        self.assertIsInstance(edited, OwnerItemView)
+        self.assertEqual(edited.name, "Watch band")
+        self.assertEqual(after.url, "https://example.com/b")
+        self.assertEqual(after.price_text, "around $20")
+        self.assertEqual(after.tag, "Birthday")
+        self.assertEqual(after.giver_note, "keep")
+        self.assertEqual(after.reaction, before.reaction)
+        self.assertEqual(after.reacted_at, before.reacted_at)
+        self.assertEqual(after.claimed_by_id, bea.id)
+        self.assertEqual(after.claimed_at, before.claimed_at)
+        self.assertIsNone(after.given_at)
+        self.assertEqual(after.owner_id, ada.id)
+        self.assertEqual(after.added_by_id, ada.id)
+        self.assertEqual(after.created_at, before.created_at)
+        self.assertFalse(hasattr(edited, "claimed_by_id"))
+        self.assertFalse(hasattr(edited, "giver_note"))
+
+    def test_blank_optional_fields_clear(self) -> None:
+        store, ada, _bea = two_people()
+        view = store.add_item(
+            ada.id,
+            ada.id,
+            "Watch",
+            url="https://example.com/a",
+            price_text="$1",
+            tag="Birthday",
+        )
+        store.edit_item(ada.id, view.id, "Watch", url="", price_text="  ", tag=None)
+        item = store._items[view.id]
+        self.assertIsNone(item.url)
+        self.assertIsNone(item.price_text)
+        self.assertIsNone(item.tag)
+
+    def test_name_is_required(self) -> None:
+        store, ada, _bea = two_people()
+        view = store.add_item(ada.id, ada.id, "Watch")
+        with self.assertRaises(Invalid) as ctx:
+            store.edit_item(ada.id, view.id, "   ")
+        self.assertEqual(str(ctx.exception), "Name is required")
+        self.assertEqual(store._items[view.id].name, "Watch")
+
+    def test_shopper_edits_suggestion_including_private_note(self) -> None:
+        store, ada, bea = two_people()
+        view = store.add_item(bea.id, ada.id, "Coat", giver_note="navy")
+        store.react(ada.id, view.id, "liked")
+        store.claim(bea.id, view.id)
+        edited = store.edit_item(
+            bea.id,
+            view.id,
+            "Wool coat",
+            url="https://example.com/coat",
+            price_text="$80",
+            tag="Birthday",
+            giver_note=" navy, size M ",
+            update_giver_note=True,
+        )
+        self.assertIsInstance(edited, ShopperItemView)
+        self.assertEqual(edited.name, "Wool coat")
+        self.assertEqual(edited.giver_note, "navy, size M")
+        self.assertEqual(edited.claimed_by_id, bea.id)
+        self.assertEqual(edited.reaction, "liked")
+        owner = store.owner_item(ada.id, view.id)
+        self.assertEqual(owner.name, "Wool coat")
+        self.assertFalse(hasattr(owner, "giver_note"))
+        self.assertFalse(hasattr(owner, "claimed_by_id"))
+
+    def test_omitted_note_flag_does_not_clear_it(self) -> None:
+        store, ada, bea = two_people()
+        view = store.add_item(bea.id, ada.id, "Coat", giver_note="navy")
+        store.edit_item(bea.id, view.id, "Wool coat", giver_note="nope")
+        self.assertEqual(store._items[view.id].giver_note, "navy")
+        self.assertEqual(store._items[view.id].name, "Wool coat")
+
+    def test_partner_cannot_edit_an_item_they_did_not_add(self) -> None:
+        store, ada, bea = two_people()
+        view = store.add_item(ada.id, ada.id, "Watch")
+        store.claim(bea.id, view.id)
+        with self.assertRaises(Forbidden) as ctx:
+            store.edit_item(bea.id, view.id, "Stolen")
+        self.assert_silent(ctx.exception)
+        self.assertEqual(store._items[view.id].name, "Watch")
+        self.assertEqual(store._items[view.id].claimed_by_id, bea.id)
+
+    def test_owner_cannot_edit_a_suggestion_they_did_not_add(self) -> None:
+        """Same refusal claimed or not, and the private note stays put."""
+
+        store, ada, bea = two_people()
+        pending = store.add_item(bea.id, ada.id, "Puzzle", giver_note="secret")
+        liked = store.add_item(bea.id, ada.id, "Kettle", giver_note="secret")
+        store.react(ada.id, liked.id, "liked")
+        store.claim(bea.id, liked.id)
+        messages = []
+        for item_id in (pending.id, liked.id):
+            with self.assertRaises(Forbidden) as ctx:
+                store.edit_item(ada.id, item_id, "Changed")
+            self.assert_silent(ctx.exception)
+            messages.append(str(ctx.exception))
+        self.assertEqual(messages[0], messages[1])
+        self.assertEqual(store._items[pending.id].name, "Puzzle")
+        self.assertEqual(store._items[liked.id].name, "Kettle")
+        self.assertEqual(store._items[liked.id].giver_note, "secret")
+        self.assertEqual(store._items[liked.id].claimed_by_id, bea.id)
+
+    def test_stranger_cannot_edit(self) -> None:
+        store, ada, _bea = two_people()
+        cal = store.add_person("Cal", "cal@example.com")
+        view = store.add_item(ada.id, ada.id, "Watch")
+        with self.assertRaises(Forbidden) as ctx:
+            store.edit_item(cal.id, view.id, "Stolen")
+        self.assert_silent(ctx.exception)
+        self.assertEqual(store._items[view.id].name, "Watch")
+
+    def test_adder_cannot_edit_once_they_can_no_longer_shop(self) -> None:
+        """can_shop is re-checked. Losing the connection closes the edit."""
+
+        store, ada, _bea = two_people()
+        cal = store.add_person("Cal", "cal@example.com")
+        store.connect(ada.id, cal.id)
+        view = store.add_item(cal.id, ada.id, "Suggestion", giver_note="quiet")
+        pair = (ada.id, cal.id) if ada.id < cal.id else (cal.id, ada.id)
+        del store._connections[pair]
+        with self.assertRaises(Forbidden) as ctx:
+            store.edit_item(
+                cal.id, view.id, "Changed", giver_note="no", update_giver_note=True
+            )
+        self.assert_silent(ctx.exception)
+        self.assertEqual(store._items[view.id].name, "Suggestion")
+        self.assertEqual(store._items[view.id].giver_note, "quiet")
+
+    def test_owner_can_edit_with_no_partner(self) -> None:
+        store = InMemoryStore(now=lambda: NOW)
+        ada = store.add_person("Ada", "ada@example.com")
+        view = store.add_item(ada.id, ada.id, "Lamp")
+        edited = store.edit_item(ada.id, view.id, "Lampshade")
+        self.assertEqual(edited.name, "Lampshade")
+
+    def test_edit_after_give_keeps_history(self) -> None:
+        store, ada, bea = two_people()
+        view = store.add_item(ada.id, ada.id, "Book")
+        store.claim(bea.id, view.id)
+        store.give(bea.id, view.id)
+        edited = store.edit_item(ada.id, view.id, "Novel")
+        self.assertEqual(edited.name, "Novel")
+        self.assertEqual(edited.received_from_id, bea.id)
+        self.assertIsNotNone(store._items[view.id].given_at)
+        self.assertEqual(store._items[view.id].claimed_by_id, bea.id)
+
+    def test_missing_item_is_not_found(self) -> None:
+        store, ada, _bea = two_people()
+        with self.assertRaises(NotFound):
+            store.edit_item(ada.id, 999, "Nope")
+
+    def test_unknown_person_is_not_found(self) -> None:
+        store, ada, _bea = two_people()
+        view = store.add_item(ada.id, ada.id, "Watch")
+        with self.assertRaises(NotFound):
+            store.edit_item(99, view.id, "Nope")

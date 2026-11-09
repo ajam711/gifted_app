@@ -323,3 +323,80 @@ def add_item(request, list_key: str):
             "show_giver_note": show_giver_note,
         },
     )
+
+
+@person_required
+def edit_item(request, item_id: int, list_key: str):
+    """Edit an item this person added. List identity is the URL, as with add.
+
+    The owner form has no private note and no claim fields. Someone else
+    is denied, and that denial does not depend on whether the item is claimed.
+    """
+
+    store = DjangoStore()
+    person = request.person
+    if list_key == "mine":
+        try:
+            current = store.owner_item(person.id, item_id)
+        except NotFound:
+            raise Http404("Not found") from None
+        show_giver_note = False
+        heading = "Edit on your list"
+        back_url = reverse("my_list")
+    else:
+        partner = _partner(store, person.id)
+        if partner is None:
+            raise Http404("Not found")
+        try:
+            current = store.shopper_item(person.id, item_id)
+        except NotFound:
+            raise Http404("Not found") from None
+        show_giver_note = True
+        heading = f"Edit on {partner.name}'s list"
+        back_url = reverse("their_list")
+
+    if current.added_by_id != person.id:
+        return HttpResponseForbidden("Not allowed")
+
+    initial = {
+        "name": current.name,
+        "url": current.url or "",
+        "price_text": current.price_text or "",
+        "tag": current.tag or "",
+    }
+    if show_giver_note:
+        initial["giver_note"] = current.giver_note or ""
+
+    form = AddItemForm(
+        request.POST or None,
+        show_giver_note=show_giver_note,
+        initial=initial,
+    )
+    if request.method == "POST" and form.is_valid():
+        try:
+            saved = store.edit_item(
+                person.id,
+                item_id,
+                update_giver_note=show_giver_note,
+                **form.item_kwargs(),
+            )
+        except Invalid as error:
+            form.add_error("name", str(error))
+        except Forbidden:
+            return HttpResponseForbidden("Not allowed")
+        except NotFound:
+            raise Http404("Not found") from None
+        else:
+            messages.success(request, f"Saved {saved.name}.")
+            return redirect(back_url)
+
+    return render(
+        request,
+        "gifts/add_item.html",
+        {
+            "form": form,
+            "heading": heading,
+            "cancel_url": back_url,
+            "show_giver_note": show_giver_note,
+        },
+    )
