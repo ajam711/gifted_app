@@ -23,6 +23,7 @@ from domain.errors import (
 from domain.models import Connection, ImportantDate, Item, Person, Reaction
 from domain.store import (
     InMemoryStore,
+    can_shop_pair,
     prepare_claim,
     prepare_give,
     prepare_new_item,
@@ -52,6 +53,7 @@ __all__ = [
     "Conflict",
     "ConflictReason",
     "Connection",
+    "can_shop_pair",
     "DomainError",
     "Forbidden",
     "HomeBadges",

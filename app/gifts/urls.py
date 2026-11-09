@@ -4,6 +4,19 @@ from gifts import views
 
 urlpatterns = [
     path("", views.home, name="home"),
+    path("lists/keep/", views.keep_person, name="keep_person"),
+    path("lists/<int:owner_id>/", views.their_list, name="shop_list"),
+    path(
+        "lists/<int:owner_id>/add/",
+        views.add_item,
+        {"list_key": "theirs"},
+        name="add_shop_item",
+    ),
+    path(
+        "lists/<int:owner_id>/from-them/",
+        views.record_gift_from,
+        name="record_gift_from",
+    ),
     path("my-list/", views.my_list, name="my_list"),
     path("my-list/add/", views.add_item, {"list_key": "mine"}, name="add_my_item"),
     path("my-list/<int:item_id>/react/", views.react_item, name="react_item"),

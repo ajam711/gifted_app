@@ -1,3 +1,4 @@
+{% load gift_tags %}
 <article class="item{% if item.id == highlight %} item-flash{% endif %}" id="item-{{ item.id }}">
   <h3>{{ item.name }}</h3>
   {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
@@ -28,8 +29,13 @@
               hx-select="main"
               hx-swap="outerHTML">
           {% csrf_token %}
-          <p>Only confirm once {{ partner.name }} has it. It will show up in {{ partner.name }}'s Received list right away, from you.</p>
-          <button type="submit" class="button">{{ partner.name }} has it</button>
+          {% if partner.user_id %}
+            <p>Only confirm once {{ partner.name }} has it. It will show up in {{ partner.name }}'s Received list right away, from you.</p>
+            <button type="submit" class="button">{{ partner.name }} has it</button>
+          {% else %}
+            <p>Record that you gave this to {{ partner.name }}. They aren't on the app, so they don't see it now.</p>
+            <button type="submit" class="button">Record it</button>
+          {% endif %}
         </form>
       </details>
       <form method="post" action="{% url 'unclaim_item' item.id %}"
@@ -41,6 +47,8 @@
         <button type="submit" class="button button-quiet">Unclaim</button>
       </form>
     </div>
+  {% elif actions == "others" %}
+    <p class="meta">Claimed by {{ names|person_name:item.claimed_by_id }}</p>
   {% elif actions == "given" %}
     <p class="meta">Given {{ item.given_at|date:"j M Y" }}</p>
   {% elif actions == "elsewhere" %}

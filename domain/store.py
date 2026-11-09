@@ -37,6 +37,28 @@ from domain.views import (
 
 _VALID_REACTIONS = frozenset({"liked", "disliked"})
 RECEIVED_FROM_MAX_LENGTH = 100
+PERSON_NAME_MAX_LENGTH = 100
+
+
+def can_shop_pair(
+    *,
+    actor_id: int,
+    owner_id: int,
+    actor_has_login: bool,
+    connected: bool,
+) -> bool:
+    """Whether ``actor`` may shop ``owner``'s list.
+
+    The actor must have a login, must not be the owner, and must have a
+    ``Connection`` to the owner. A person with no login has at most one
+    connection, so the actor who passes this check on that list is the
+    keeper. Several logged-in partners of someone who *does* have a
+    login may all shop that list.
+    """
+
+    if not actor_has_login or actor_id == owner_id or not connected:
+        return False
+    return True
 
 
 def prepare_new_item(
@@ -49,18 +71,20 @@ def prepare_new_item(
     price_text: str | None = None,
     tag: str | None = None,
     giver_note: str | None = None,
+    owner_has_login: bool = True,
 ) -> dict:
     """Validated columns for a new ``Item``, minus ``id``.
 
-    Self-add persists ``reaction='liked'`` and ``reacted_at`` in the same
-    insert so ``reaction is None`` keeps one meaning: partner suggestion
-    waiting on yes/no. Persistence (memory or Django) assigns the id.
+    Persist ``reaction='liked'`` and ``reacted_at`` in the same insert
+    when the actor is the owner, or when the owner has no login. Then
+    ``reaction is None`` keeps one meaning: a suggestion waiting on
+    yes/no from an owner who has a login. Persistence assigns the id.
     """
 
     cleaned = name.strip()
     if not cleaned:
         raise Invalid("Name is required")
-    own_list = actor_id == owner_id
+    liked_on_insert = actor_id == owner_id or not owner_has_login
     return {
         "owner_id": owner_id,
         "added_by_id": actor_id,
@@ -69,8 +93,8 @@ def prepare_new_item(
         "price_text": price_text,
         "tag": tag,
         "giver_note": giver_note,
-        "reaction": "liked" if own_list else None,
-        "reacted_at": now if own_list else None,
+        "reaction": "liked" if liked_on_insert else None,
+        "reacted_at": now if liked_on_insert else None,
         "claimed_by_id": None,
         "claimed_at": None,
         "given_at": None,
@@ -114,14 +138,15 @@ def prepare_reaction(
     return replace(updated, claim_released_at=None)
 
 
-def _require_shopper(item: Item, actor_id: int, actor_is_partner: bool) -> None:
+def _require_shopper(item: Item, actor_id: int, actor_can_shop: bool) -> None:
     """Owner or stranger → ``Forbidden``, before any look at claim state.
 
-    This runs first in every shopper action so the owner gets the same
-    refusal whatever the item's state, and never reaches ``Conflict``.
+    ``actor_can_shop`` is the result of ``can_shop``. This runs first in
+    every shopper action so the owner gets the same refusal whatever the
+    item's state, and never reaches ``Conflict``.
     """
 
-    if item.owner_id == actor_id or not actor_is_partner:
+    if item.owner_id == actor_id or not actor_can_shop:
         raise Forbidden()
 
 
@@ -146,16 +171,17 @@ def _not_claimable_reason(item: Item, actor_id: int) -> ConflictReason | None:
 def prepare_claim(
     item: Item,
     actor_id: int,
-    actor_is_partner: bool,
+    actor_can_shop: bool,
     now: datetime,
 ) -> Item:
-    """Replacement row after a valid partner claim.
+    """Replacement row after a valid shopper claim.
 
-    Owner or non-partner → ``Forbidden``. Partner, but the item is not
-    ``liked_open`` → ``Conflict`` with the reason.
+    Owner, or anyone ``can_shop`` refuses → ``Forbidden``. A shopper the
+    check allows, but the item is not ``liked_open`` → ``Conflict`` with
+    the reason. On a no-login owner's list, ``can_shop`` is only the keeper.
     """
 
-    _require_shopper(item, actor_id, actor_is_partner)
+    _require_shopper(item, actor_id, actor_can_shop)
     reason = _not_claimable_reason(item, actor_id)
     if reason is not None:
         raise Conflict(reason)
@@ -164,10 +190,10 @@ def prepare_claim(
     )
 
 
-def _require_own_claim(item: Item, actor_id: int, actor_is_partner: bool) -> None:
-    """Unclaim / give guard: partner, holding the claim, not yet given."""
+def _require_own_claim(item: Item, actor_id: int, actor_can_shop: bool) -> None:
+    """Unclaim / give guard: allowed shopper, holding the claim, not yet given."""
 
-    _require_shopper(item, actor_id, actor_is_partner)
+    _require_shopper(item, actor_id, actor_can_shop)
     if item.given_at is not None:
         raise Conflict("given")
     if item.received_at is not None:
@@ -176,24 +202,26 @@ def _require_own_claim(item: Item, actor_id: int, actor_is_partner: bool) -> Non
         raise Conflict("disliked" if item.reaction == "disliked" else "not_claimed")
 
 
-def prepare_unclaim(item: Item, actor_id: int, actor_is_partner: bool) -> Item:
+def prepare_unclaim(item: Item, actor_id: int, actor_can_shop: bool) -> Item:
     """Replacement row after the claimer releases an item not yet given."""
 
-    _require_own_claim(item, actor_id, actor_is_partner)
+    _require_own_claim(item, actor_id, actor_can_shop)
     return replace(item, claimed_by_id=None, claimed_at=None)
 
 
 def prepare_give(
-    item: Item, actor_id: int, actor_is_partner: bool, now: datetime
+    item: Item, actor_id: int, actor_can_shop: bool, now: datetime
 ) -> Item:
     """Replacement row after the claimer hands it over. ``claimed_by_id`` stays.
 
-    Give is the hand-over, so the owner has it now: ``received_at`` is
-    set in the same write and the owner sees it under Received, from
-    the claimer. The UI confirms before calling this.
+    Give sets ``given_at`` and ``received_at`` together. An owner with a
+    login sees the gift under Received, from the claimer. An owner with
+    no login has no session, so the same write is the keeper's history.
+    The UI confirms before calling this, and says so when the owner has
+    a login.
     """
 
-    _require_own_claim(item, actor_id, actor_is_partner)
+    _require_own_claim(item, actor_id, actor_can_shop)
     return replace(item, given_at=now, received_at=now)
 
 
@@ -247,7 +275,8 @@ def _utc_now() -> datetime:
 class InMemoryStore:
     """All V1 mutations live here so the rules have one place to read.
 
-    Partner always means "the other id on this person's ``Connection``".
+    Partner means "this actor has a ``Connection`` to that owner".
+    Shopper permission is ``can_shop``.
     """
 
     def __init__(self, now: Callable[[], datetime] | None = None) -> None:
@@ -260,26 +289,81 @@ class InMemoryStore:
         self._next_person_id = 1
         self._next_item_id = 1
 
-    def add_person(self, name: str, email: str) -> Person:
-        """Create a person. Does not connect them; call ``connect`` next."""
+    def add_person(
+        self, name: str, email: str, user_id: int | None = None
+    ) -> Person:
+        """Create a person. Does not connect them; call ``connect`` next.
 
-        person = Person(id=self._next_person_id, name=name, email=email)
+        ``user_id`` null means no login. It is unique when set.
+        """
+
+        if user_id is not None and any(
+            person.user_id == user_id for person in self._people.values()
+        ):
+            raise Invalid()
+        person = Person(
+            id=self._next_person_id, name=name, email=email, user_id=user_id
+        )
         self._next_person_id += 1
         self._people[person.id] = person
         return person
 
+    def keep_person(self, actor_id: int, name: str, email: str = "") -> Person:
+        """A private list for someone who is not on the app.
+
+        The actor must have a login. The new person has ``user_id`` null
+        and exactly one connection: to the actor, who is the keeper.
+        """
+
+        actor = self._require_person(actor_id)
+        if actor.user_id is None:
+            raise Forbidden()
+        cleaned = name.strip()
+        if not cleaned:
+            raise Invalid("Name is required")
+        if len(cleaned) > PERSON_NAME_MAX_LENGTH:
+            raise Invalid()
+        email = email.strip()
+        person = self.add_person(cleaned, email, user_id=None)
+        self.connect(actor_id, person.id)
+        return person
+
+    def link_login(self, person_id: int, user_id: int) -> Person:
+        """Attach an auth user to a person. An update, not a new table.
+
+        One-to-one: ``user_id`` cannot already belong to someone else.
+        Linking again to the same user is a no-op. A different user is
+        ``Invalid``.
+        """
+
+        person = self._require_person(person_id)
+        if person.user_id == user_id:
+            return person
+        if person.user_id is not None or any(
+            other.user_id == user_id for other in self._people.values()
+        ):
+            raise Invalid()
+        updated = replace(person, user_id=user_id)
+        self._people[person.id] = updated
+        return updated
+
     def connect(self, person_id: int, other_id: int) -> Connection:
-        """Record the pair, ordered so ``person_a_id < person_b_id``.
+        """Record one pair, ordered so ``person_a_id < person_b_id``.
 
         Call order does not matter: ``connect(2, 1)`` stores ``(1, 2)``.
         Connecting the same pair twice, or a person to themselves, is
-        ``Invalid``.
+        ``Invalid``. A person with no login may have only one connection,
+        so their list stays private to that keeper.
         """
 
         self._require_person(person_id)
         self._require_person(other_id)
         if person_id == other_id:
             raise Invalid()
+        for pid in (person_id, other_id):
+            person = self._people[pid]
+            if person.user_id is None and self._partner_ids(pid):
+                raise Invalid()
         a, b = (person_id, other_id) if person_id < other_id else (other_id, person_id)
         key = (a, b)
         if key in self._connections:
@@ -288,17 +372,36 @@ class InMemoryStore:
         self._connections[key] = conn
         return conn
 
-    def partner_id(self, person_id: int) -> int:
-        """The other person on this person's connection.
-
-        Walks ``Connection`` rows, never ``len(self._people)``.
-        """
+    def partner_ids(self, person_id: int) -> list[int]:
+        """Everyone connected to this person, via ``Connection`` only."""
 
         self._require_person(person_id)
-        partner = self._partner_id_or_none(person_id)
-        if partner is None:
+        return self._partner_ids(person_id)
+
+    def partner_id(self, person_id: int) -> int:
+        """The other person when this person has exactly one connection.
+
+        Zero or several connections is ``NotFound`` — callers that need
+        every list use ``partner_ids``. Walks ``Connection`` rows, never
+        ``len(self._people)``.
+        """
+
+        partners = self.partner_ids(person_id)
+        if len(partners) != 1:
             raise NotFound()
-        return partner
+        return partners[0]
+
+    def can_shop(self, actor_id: int, owner_id: int) -> bool:
+        """Shopper permission for every shopper action. See ``can_shop_pair``."""
+
+        actor = self._require_person(actor_id)
+        owner = self._require_person(owner_id)
+        return can_shop_pair(
+            actor_id=actor.id,
+            owner_id=owner.id,
+            actor_has_login=actor.user_id is not None,
+            connected=self._is_partner(actor.id, owner.id),
+        )
 
     def add_important_date(
         self,
@@ -326,27 +429,41 @@ class InMemoryStore:
         return record
 
     def next_partner_important_date(self, viewer_id: int, on: date) -> UpcomingDate | None:
-        """Soonest upcoming date that belongs to the *partner*, not the viewer.
+        """Soonest upcoming date among people this viewer is connected to.
 
-        Home badge: "Birthday in 12 days". Uses ``partner_id``, so a
-        third ``Person`` row cannot steal the answer.
+        Home badge: "Birthday in 12 days". Uses ``partner_ids``, so an
+        unconnected ``Person`` row cannot steal the answer. No connection
+        is ``NotFound``.
         """
 
-        partner = self.partner_id(viewer_id)
+        partners = set(self.partner_ids(viewer_id))
+        if not partners:
+            raise NotFound()
         return soonest_upcoming(
-            (record for record in self._dates if record.person_id == partner),
+            (record for record in self._dates if record.person_id in partners),
+            on,
+        )
+
+    def next_important_date(self, person_id: int, on: date) -> UpcomingDate | None:
+        """Soonest upcoming date for this person. The caller already chose them."""
+
+        self._require_person(person_id)
+        return soonest_upcoming(
+            (record for record in self._dates if record.person_id == person_id),
             on,
         )
 
     def home_badges(self, viewer_id: int, on: date) -> HomeBadges:
-        """Owner Home payload: "N need you" and the partner's next date.
+        """Owner Home payload: "N need you" and the soonest partner date.
 
-        No partner means no date badge. The count is still the viewer's
-        own ``needs_reaction`` rows. Claim state is not an input.
+        No connection means no date badge. The date is the soonest
+        ``ImportantDate`` among people reached through ``Connection``.
+        The count is still the viewer's own ``needs_reaction`` rows.
+        Claim state is not an input.
         """
 
         upcoming = None
-        if self._partner_id_or_none(viewer_id) is not None:
+        if self.partner_ids(viewer_id):
             upcoming = self.next_partner_important_date(viewer_id, on)
         return HomeBadges(
             needs_you=self.needs_reaction_count(viewer_id),
@@ -369,16 +486,20 @@ class InMemoryStore:
         List identity comes from where the screen was opened
         (``owner_id``), not from a list picker.
 
-        * Actor == owner: persist ``reaction='liked'`` and ``reacted_at``
-          in this same insert. Return ``OwnerItemView``.
-        * Actor is partner: leave ``reaction`` null (needs reaction).
-          Return ``ShopperItemView`` so a giver note they typed is visible
-          to them and never to the owner.
+        * Actor == owner, or the owner has no login: persist
+          ``reaction='liked'`` and ``reacted_at`` in this same insert.
+          A self-add returns ``OwnerItemView``. Adding to someone else's
+          list returns ``ShopperItemView``, so a giver note is visible to
+          the shopper and never to the owner.
+        * Actor can shop an owner who has a login: leave ``reaction``
+          null (needs reaction).
         """
 
-        self._require_person(actor_id)
-        self._require_person(owner_id)
-        if owner_id != actor_id and not self._is_partner(actor_id, owner_id):
+        actor = self._require_person(actor_id)
+        owner = self._require_person(owner_id)
+        if actor.user_id is None:
+            raise Forbidden()
+        if owner_id != actor_id and not self.can_shop(actor_id, owner_id):
             raise Forbidden()
         fields = prepare_new_item(
             actor_id,
@@ -389,6 +510,7 @@ class InMemoryStore:
             price_text=price_text,
             tag=tag,
             giver_note=giver_note,
+            owner_has_login=owner.user_id is not None,
         )
         item = Item(id=self._next_item_id, **fields)
         self._next_item_id += 1
@@ -406,6 +528,9 @@ class InMemoryStore:
         """
 
         item = self._require_item(item_id)
+        owner = self._require_person(item.owner_id)
+        if owner.user_id is None:
+            raise Forbidden()
         updated = prepare_reaction(item, actor_id, reaction, self._now())
         self._items[item.id] = updated
         return to_owner_view(updated)
@@ -421,7 +546,7 @@ class InMemoryStore:
 
         item = self._require_item(item_id)
         updated = prepare_claim(
-            item, actor_id, self._is_partner(actor_id, item.owner_id), self._now()
+            item, actor_id, self.can_shop(actor_id, item.owner_id), self._now()
         )
         self._items[item.id] = updated
         return to_shopper_view(updated)
@@ -431,7 +556,7 @@ class InMemoryStore:
 
         item = self._require_item(item_id)
         updated = prepare_unclaim(
-            item, actor_id, self._is_partner(actor_id, item.owner_id)
+            item, actor_id, self.can_shop(actor_id, item.owner_id)
         )
         self._items[updated.id] = updated
         return to_shopper_view(updated)
@@ -441,7 +566,7 @@ class InMemoryStore:
 
         item = self._require_item(item_id)
         updated = prepare_give(
-            item, actor_id, self._is_partner(actor_id, item.owner_id), self._now()
+            item, actor_id, self.can_shop(actor_id, item.owner_id), self._now()
         )
         self._items[updated.id] = updated
         return to_shopper_view(updated)
@@ -485,10 +610,19 @@ class InMemoryStore:
         items.sort(key=lambda item: (item.created_at, item.id))
         return [to_owner_view(item) for item in items]
 
-    def shopper_items(self, actor_id: int) -> list[ShopperItemView]:
-        """Their list. Owner is resolved through ``Connection``, then projected."""
+    def shopper_items(
+        self, actor_id: int, owner_id: int | None = None
+    ) -> list[ShopperItemView]:
+        """A list this actor can shop, projected for the shopper.
 
-        owner_id = self.partner_id(actor_id)
+        Omit ``owner_id`` only when the actor has exactly one connection.
+        Anyone ``can_shop`` refuses is ``NotFound``.
+        """
+
+        if owner_id is None:
+            owner_id = self.partner_id(actor_id)
+        elif not self.can_shop(actor_id, owner_id):
+            raise NotFound()
         items = [item for item in self._items.values() if item.owner_id == owner_id]
         items.sort(key=lambda item: (item.created_at, item.id))
         return [to_shopper_view(item) for item in items]
@@ -505,7 +639,7 @@ class InMemoryStore:
         """Item detail for the shopper. Owner calling this is ``NotFound``."""
 
         item = self._require_item(item_id)
-        if item.owner_id == actor_id or not self._is_partner(actor_id, item.owner_id):
+        if not self.can_shop(actor_id, item.owner_id):
             raise NotFound()
         return to_shopper_view(item)
 
@@ -531,15 +665,17 @@ class InMemoryStore:
             raise NotFound()
         return item
 
-    def _partner_id_or_none(self, person_id: int) -> int | None:
+    def _partner_ids(self, person_id: int) -> list[int]:
         """Scan connections for this id. The pair is unordered at lookup time."""
 
+        found: list[int] = []
         for conn in self._connections.values():
             if conn.person_a_id == person_id:
-                return conn.person_b_id
-            if conn.person_b_id == person_id:
-                return conn.person_a_id
-        return None
+                found.append(conn.person_b_id)
+            elif conn.person_b_id == person_id:
+                found.append(conn.person_a_id)
+        found.sort()
+        return found
 
     def _is_partner(self, person_id: int, other_id: int) -> bool:
         """True only if a ``Connection`` row exists for this unordered pair."""

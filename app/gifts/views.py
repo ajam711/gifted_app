@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.db import transaction
 from django.http import Http404, HttpResponseForbidden
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -16,31 +17,97 @@ from domain import (
 )
 
 from gifts.auth import person_required
-from gifts.forms import AddItemForm
-from gifts.models import Person
+from gifts.forms import AddItemForm, KeepPersonForm
+from gifts.models import Item, Person
 from gifts.store import DjangoStore
 
 
-def _partner(store: DjangoStore, person_id: int) -> Person | None:
+def _names(person_ids) -> dict[int, str]:
+    ids = {pk for pk in person_ids if pk}
+    if not ids:
+        return {}
+    return dict(Person.objects.filter(pk__in=ids).values_list("id", "name"))
+
+
+def _shop_location(
+    store: DjangoStore, actor_id: int, owner_id: int, item_id: int | None = None
+) -> str:
+    """URL of a shoppable list. One connection keeps the old ``/their-list/`` path."""
+
+    if store.partner_ids(actor_id) == [owner_id]:
+        base = reverse("their_list")
+    else:
+        base = reverse("shop_list", args=[owner_id])
+    if item_id is None:
+        return base
+    return f"{base}?item={item_id}"
+
+
+def _resolve_shop_owner(
+    store: DjangoStore, actor_id: int, owner_id: int | None
+) -> int:
+    """The list this screen was opened for. Missing or not shoppable is 404."""
+
+    if owner_id is None:
+        try:
+            return store.partner_id(actor_id)
+        except NotFound:
+            raise Http404("Not found") from None
     try:
-        partner_id = store.partner_id(person_id)
+        allowed = store.can_shop(actor_id, owner_id)
     except NotFound:
-        return None
-    return Person.objects.get(pk=partner_id)
+        raise Http404("Not found") from None
+    if not allowed:
+        raise Http404("Not found")
+    return owner_id
+
+
+def _home_context(request, keep_form: KeepPersonForm) -> dict:
+    store = DjangoStore()
+    today = timezone.localdate()
+    person = request.person
+    # Badges come from the domain payload: a needs-reaction count and the
+    # soonest date among people reached through Connection. Neither value
+    # is derived from claim columns. Each door shows that person's date.
+    doors = []
+    for other_id in store.partner_ids(person.id):
+        doors.append(
+            {
+                "person": Person.objects.get(pk=other_id),
+                "upcoming": store.next_important_date(other_id, today),
+                "url": _shop_location(store, person.id, other_id),
+            }
+        )
+    return {
+        "person": person,
+        "badges": store.home_badges(person.id, today),
+        "shop_doors": doors,
+        "keep_form": keep_form,
+    }
 
 
 @person_required
 def home(request):
-    store = DjangoStore()
-    partner = _partner(store, request.person.id)
-    # Badges come from the domain payload: a needs-reaction count and the
-    # partner's next date. Neither value is derived from claim columns.
-    badges = store.home_badges(request.person.id, timezone.localdate())
     return render(
-        request,
-        "gifts/home.html",
-        {"person": request.person, "partner": partner, "badges": badges},
+        request, "gifts/home.html", _home_context(request, KeepPersonForm())
     )
+
+
+@person_required
+@require_POST
+def keep_person(request):
+    """Start a private list for someone who will not sign in."""
+
+    form = KeepPersonForm(request.POST)
+    if not form.is_valid():
+        return render(request, "gifts/home.html", _home_context(request, form))
+    person = DjangoStore().keep_person(
+        request.person.id,
+        form.cleaned_data["name"],
+        form.cleaned_data["email"],
+    )
+    messages.success(request, f"Keeping a list for {person.name}.")
+    return redirect("shop_list", owner_id=person.id)
 
 
 def _grouped_owner_items(
@@ -73,19 +140,18 @@ def _grouped_owner_items(
 @person_required
 def my_list(request):
     store = DjangoStore()
-    pending, liked, disliked, received = _grouped_owner_items(
-        store.owner_items(request.person.id)
-    )
+    items = store.owner_items(request.person.id)
+    pending, liked, disliked, received = _grouped_owner_items(items)
     return render(
         request,
         "gifts/my_list.html",
         {
             "person": request.person,
-            "partner": _partner(store, request.person.id),
             "pending": pending,
             "liked": liked,
             "disliked": disliked,
             "received": received,
+            "giver_names": _names(item.received_from_id for item in received),
         },
     )
 
@@ -161,6 +227,7 @@ def _grouped_shopper_items(
     groups: dict[str, list[ShopperItemView]] = {
         "open": [],
         "yours": [],
+        "others": [],
         "waiting": [],
         "given": [],
         "disliked": [],
@@ -173,6 +240,8 @@ def _grouped_shopper_items(
             groups["elsewhere"].append(item)
         elif item.claimed_by_id == shopper_id:
             groups["yours"].append(item)
+        elif item.claimed_by_id is not None:
+            groups["others"].append(item)
         elif item.reaction == "liked" and item.claimed_by_id is None:
             groups["open"].append(item)
         elif item.reaction is None:
@@ -183,14 +252,21 @@ def _grouped_shopper_items(
 
 
 @person_required
-def their_list(request):
+def their_list(request, owner_id: int | None = None):
     store = DjangoStore()
-    partner = _partner(store, request.person.id)
-    if partner is None:
-        raise Http404("Not found")
+    owner_id = _resolve_shop_owner(store, request.person.id, owner_id)
+    partner = Person.objects.get(pk=owner_id)
     groups = _grouped_shopper_items(
-        store.shopper_items(request.person.id), request.person.id
+        store.shopper_items(request.person.id, owner_id), request.person.id
     )
+    from_them: list[OwnerItemView] = []
+    if partner.user_id is None:
+        from_them = [
+            item
+            for item in store.owner_items(request.person.id)
+            if item.received_at is not None and item.received_from == partner.name
+        ]
+        from_them.sort(key=lambda item: item.received_at, reverse=True)
     # ``?item=<id>`` after a claim / unclaim / give: briefly highlight that card.
     highlight = request.GET.get("item", "")
     return render(
@@ -201,6 +277,11 @@ def their_list(request):
             "partner": partner,
             "has_items": any(groups.values()),
             "highlight": int(highlight) if highlight.isdigit() else None,
+            "names": _names(
+                item.claimed_by_id for group in groups.values() for item in group
+            ),
+            "from_them": from_them,
+            "add_url": reverse("add_shop_item", args=[owner_id]),
             **groups,
         },
     )
@@ -231,27 +312,33 @@ def _shopper_action(request, item_id: int, action: str, done: str):
     """
 
     store = DjangoStore()
-    their_list_url = f"{reverse('their_list')}?item={item_id}"
     try:
         saved = getattr(store, action)(request.person.id, item_id)
     except Conflict as refusal:
-        item = store.shopper_item(request.person.id, item_id)
-        partner = _partner(store, request.person.id)
+        try:
+            item = store.shopper_item(request.person.id, item_id)
+        except NotFound:
+            raise Http404("Not found") from None
+        owner = Item.objects.select_related("owner").get(pk=item_id).owner
         messages.warning(
             request,
             _CONFLICT_MESSAGES[refusal.reason].format(
-                name=item.name, partner=partner.name
+                name=item.name, partner=owner.name
             ),
         )
-        return redirect(their_list_url)
+        return redirect(_shop_location(store, request.person.id, owner.id, item_id))
     except (Forbidden, Invalid):
         messages.error(request, "Could not save that.")
-        return redirect("their_list")
+        if len(store.partner_ids(request.person.id)) == 1:
+            return redirect("their_list")
+        return redirect("home")
     except NotFound:
         raise Http404("Not found") from None
-    partner = _partner(store, request.person.id)
-    messages.success(request, done.format(name=saved.name, partner=partner.name))
-    return redirect(their_list_url)
+    owner = Item.objects.select_related("owner").get(pk=saved.id).owner
+    if action == "give" and owner.user_id is None:
+        done = "Recorded {name} as given to {partner}."
+    messages.success(request, done.format(name=saved.name, partner=owner.name))
+    return redirect(_shop_location(store, request.person.id, owner.id, item_id))
 
 
 @person_required
@@ -278,7 +365,7 @@ def give_item(request, item_id: int):
 
 
 @person_required
-def add_item(request, list_key: str):
+def add_item(request, list_key: str, owner_id: int | None = None):
     """List identity is the URL this screen was opened from, not a picker."""
 
     store = DjangoStore()
@@ -290,14 +377,12 @@ def add_item(request, list_key: str):
         success_url = reverse("my_list")
         cancel_url = reverse("my_list")
     else:
-        partner = _partner(store, person.id)
-        if partner is None:
-            raise Http404("Not found")
-        owner_id = partner.id
+        owner_id = _resolve_shop_owner(store, person.id, owner_id)
+        partner = Person.objects.get(pk=owner_id)
         heading = f"Add to {partner.name}'s list"
         show_giver_note = True
-        success_url = reverse("their_list")
-        cancel_url = reverse("their_list")
+        success_url = _shop_location(store, person.id, owner_id)
+        cancel_url = success_url
 
     form = AddItemForm(request.POST or None, show_giver_note=show_giver_note)
     if request.method == "POST" and form.is_valid():
@@ -323,3 +408,40 @@ def add_item(request, list_key: str):
             "show_giver_note": show_giver_note,
         },
     )
+
+
+@person_required
+@require_POST
+def record_gift_from(request, owner_id: int):
+    """A gift the keeper got from someone who isn't on the app.
+
+    It is an item on the keeper's own list, then the existing receive
+    action with ``received_from`` set to that person's name.
+    """
+
+    store = DjangoStore()
+    owner_id = _resolve_shop_owner(store, request.person.id, owner_id)
+    person = Person.objects.get(pk=owner_id)
+    if person.user_id is not None:
+        raise Http404("Not found")
+    back = _shop_location(store, request.person.id, owner_id)
+    form = AddItemForm(request.POST, show_giver_note=False)
+    if not form.is_valid():
+        message = "Could not save that."
+        if form.errors:
+            message = next(iter(form.errors.values()))[0]
+        messages.error(request, str(message))
+        return redirect(back)
+    try:
+        with transaction.atomic():
+            saved = store.add_item(
+                request.person.id, request.person.id, **form.item_kwargs()
+            )
+            store.receive(request.person.id, saved.id, person.name)
+    except (Invalid, Forbidden):
+        messages.error(request, "Could not save that.")
+        return redirect(back)
+    except NotFound:
+        raise Http404("Not found") from None
+    messages.success(request, f"Saved {saved.name} as a gift from {person.name}.")
+    return redirect(back)

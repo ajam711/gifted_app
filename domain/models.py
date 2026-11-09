@@ -26,29 +26,37 @@ Reaction = Literal["liked", "disliked"]
 
 @dataclass(frozen=True, slots=True)
 class Person:
-    """Someone who can own a list and shop the other list.
+    """Someone who can own a list. A login is optional.
 
-    Auth (passwords, sessions) is *adjacent* — Django ``User`` later —
+    Auth (passwords, sessions) is *adjacent* — Django ``User`` —
     not a second gift-domain user table. No ``password_hash`` here.
+
+    ``user_id is None`` means this person is not on the app. The keeper
+    of their list is the one logged-in person connected to them. A login
+    can be linked later by setting ``user_id``; that is an update, not
+    a schema change.
 
     Attributes:
         id: Stable identifier. Assigned by the store.
         name: Display name.
-        email: Contact; not used for signup in V1.
+        email: Contact. May be empty when there is no login.
+        user_id: Nullable one-to-one link to an auth user.
     """
 
     id: int
     name: str
     email: str
+    user_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Connection:
-    """The pair. Every "other person" lookup goes through this table.
+    """One row per pair, not a single pair for the whole app.
 
-    Do not write ``[p for p in people if p.id != me][0]``. That breaks
-    the moment a third ``Person`` row exists (tests, admin, mistakes).
-    Ask the connection instead.
+    Every "who else" lookup goes through this table. Do not write
+    ``[p for p in people if p.id != me][0]``. A person may have several
+    connections: the other person on the app, and people they keep a
+    list for. Ask the connection instead.
 
     Constraints the store enforces (same as the SQL we will write later):
 

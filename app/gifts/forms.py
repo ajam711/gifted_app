@@ -7,6 +7,39 @@ _HTTPS_ONLY = URLValidator(schemes=["https"])
 _URL_ERROR = "Use a link that starts with https://"
 
 
+class KeepPersonForm(forms.Form):
+    """Name of someone who will not sign in. Email is optional."""
+
+    name = forms.CharField(
+        max_length=100,
+        label="Name",
+        error_messages={"required": "Name is required"},
+        widget=forms.TextInput(
+            attrs={
+                "id": "keep-name",
+                "autocomplete": "off",
+                "placeholder": "Their name",
+            }
+        ),
+    )
+    email = forms.EmailField(
+        required=False,
+        label="Email",
+        widget=forms.EmailInput(
+            attrs={"id": "keep-email", "autocomplete": "off", "placeholder": "optional"}
+        ),
+    )
+
+    def clean_name(self) -> str:
+        name = self.cleaned_data["name"].strip()
+        if not name:
+            raise forms.ValidationError("Name is required")
+        return name
+
+    def clean_email(self) -> str:
+        return (self.cleaned_data.get("email") or "").strip()
+
+
 class LoginForm(AuthenticationForm):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)

@@ -4,7 +4,7 @@
   <p class="crumb"><a href="{% url 'home' %}">Home</a></p>
   <div class="heading-row">
     <h1>{{ partner.name }}'s list</h1>
-    <a class="button" href="{% url 'add_their_item' %}">Add item</a>
+    <a class="button" href="{{ add_url }}">Add item</a>
   </div>
   {% if has_items %}
     {% if yours %}
@@ -13,6 +13,16 @@
         <ul class="items">
           {% for item in yours %}
             <li>{% include "gifts/_shopper_item.html" with actions="yours" %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    {% if others %}
+      <section class="item-group" aria-labelledby="others-heading">
+        <h2 id="others-heading" class="group-title">Claimed</h2>
+        <ul class="items">
+          {% for item in others %}
+            <li>{% include "gifts/_shopper_item.html" with actions="others" %}</li>
           {% endfor %}
         </ul>
       </section>
@@ -69,5 +79,37 @@
     {% endif %}
   {% else %}
     <p class="empty">Nothing here yet.</p>
+  {% endif %}
+  {% if not partner.user_id %}
+    <section class="item-group" aria-labelledby="from-them-heading">
+      <h2 id="from-them-heading" class="group-title">Gifts from {{ partner.name }}</h2>
+      <p class="help">Only you see this list. A gift you got from {{ partner.name }} is saved on your own list.</p>
+      <form method="post" action="{% url 'record_gift_from' partner.id %}" class="add-item">
+        {% csrf_token %}
+        <div class="field">
+          <label for="from-name">What did you get?</label>
+          <input id="from-name" name="name" maxlength="200" required autocomplete="off" placeholder="What is it?">
+        </div>
+        <div class="field">
+          <label for="from-url">Link <span class="optional">(optional)</span></label>
+          <input id="from-url" name="url" maxlength="500" autocomplete="off" placeholder="https://…">
+        </div>
+        <button class="button" type="submit">I got this from {{ partner.name }}</button>
+      </form>
+      {% if from_them %}
+        <ul class="items">
+          {% for item in from_them %}
+            <li>
+              <article class="item">
+                <h3>{{ item.name }}</h3>
+                <p class="meta">From {{ partner.name }} · {{ item.received_at|date:"j M Y" }}</p>
+              </article>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="empty">Nothing from {{ partner.name }} yet.</p>
+      {% endif %}
+    </section>
   {% endif %}
 {% endblock %}

@@ -26,6 +26,7 @@ from domain import (
     OwnerItemView,
     ShopperItemView,
     UpcomingDate,
+    can_shop_pair,
     needs_reaction,
     prepare_claim,
     prepare_give,
@@ -38,6 +39,7 @@ from domain import (
     to_owner_view,
     to_shopper_view,
 )
+from domain.store import PERSON_NAME_MAX_LENGTH
 from domain.models import Item as DomainItem
 
 from gifts.models import Connection, ImportantDate, Item, Person
@@ -91,12 +93,71 @@ class DjangoStore:
     def __init__(self, now: Callable[[], datetime] | None = None) -> None:
         self._now = now or _utc_now
 
-    def partner_id(self, person_id: int) -> int:
+    def partner_ids(self, person_id: int) -> list[int]:
+        """Everyone connected to this person, via ``Connection`` only."""
+
         self._require_person(person_id)
-        partner = self._partner_id_or_none(person_id)
-        if partner is None:
+        ids = set(
+            Connection.objects.filter(person_a_id=person_id).values_list(
+                "person_b_id", flat=True
+            )
+        )
+        ids.update(
+            Connection.objects.filter(person_b_id=person_id).values_list(
+                "person_a_id", flat=True
+            )
+        )
+        return sorted(ids)
+
+    def partner_id(self, person_id: int) -> int:
+        """The other person when there is exactly one connection."""
+
+        partners = self.partner_ids(person_id)
+        if len(partners) != 1:
             raise NotFound()
-        return partner
+        return partners[0]
+
+    def can_shop(self, actor_id: int, owner_id: int) -> bool:
+        """Shopper permission for every shopper action. See ``can_shop_pair``."""
+
+        actor = self._require_person(actor_id)
+        owner = self._require_person(owner_id)
+        return can_shop_pair(
+            actor_id=actor.id,
+            owner_id=owner.id,
+            actor_has_login=actor.user_id is not None,
+            connected=self._is_partner(actor.id, owner.id),
+        )
+
+    def keep_person(self, actor_id: int, name: str, email: str = "") -> Person:
+        """A private list for someone who is not on the app."""
+
+        actor = self._require_person(actor_id)
+        if actor.user_id is None:
+            raise Forbidden()
+        cleaned = name.strip()
+        if not cleaned:
+            raise Invalid("Name is required")
+        if len(cleaned) > PERSON_NAME_MAX_LENGTH:
+            raise Invalid()
+        person = Person.objects.create(name=cleaned, email=email.strip(), user=None)
+        low, high = (actor, person) if actor.id < person.id else (person, actor)
+        Connection.objects.create(
+            person_a=low, person_b=high, created_at=self._now()
+        )
+        return person
+
+    def link_login(self, person_id: int, user_id: int) -> Person:
+        """Attach an auth user. One-to-one, and an update of a nullable column."""
+
+        person = self._require_person(person_id)
+        if person.user_id == user_id:
+            return person
+        if person.user_id is not None or Person.objects.filter(user_id=user_id).exists():
+            raise Invalid()
+        person.user_id = user_id
+        person.save(update_fields=["user"])
+        return person
 
     def add_item(
         self,
@@ -109,9 +170,11 @@ class DjangoStore:
         tag: str | None = None,
         giver_note: str | None = None,
     ) -> OwnerItemView | ShopperItemView:
-        self._require_person(actor_id)
-        self._require_person(owner_id)
-        if owner_id != actor_id and not self._is_partner(actor_id, owner_id):
+        actor = self._require_person(actor_id)
+        owner = self._require_person(owner_id)
+        if actor.user_id is None:
+            raise Forbidden()
+        if owner_id != actor_id and not self.can_shop(actor_id, owner_id):
             raise Forbidden()
         fields = prepare_new_item(
             actor_id,
@@ -122,6 +185,7 @@ class DjangoStore:
             price_text=price_text,
             tag=tag,
             giver_note=giver_note,
+            owner_has_login=owner.user_id is not None,
         )
         row = Item.objects.create(**fields)
         item = domain_item(row)
@@ -130,10 +194,15 @@ class DjangoStore:
         return to_shopper_view(item)
 
     def react(self, actor_id: int, item_id: int, reaction: str) -> OwnerItemView:
-        updated = self._mutate(
-            item_id,
-            lambda item: prepare_reaction(item, actor_id, reaction, self._now()),
-        )
+        def rule(item):
+            owner = self._require_person(item.owner_id)
+            # Nobody reacts on a list whose owner has no login. Same
+            # Forbidden whether or not the row is claimed.
+            if owner.user_id is None:
+                raise Forbidden()
+            return prepare_reaction(item, actor_id, reaction, self._now())
+
+        updated = self._mutate(item_id, rule)
         return to_owner_view(updated)
 
     def claim(self, actor_id: int, item_id: int) -> ShopperItemView:
@@ -142,7 +211,7 @@ class DjangoStore:
             lambda item: prepare_claim(
                 item,
                 actor_id,
-                self._is_partner(actor_id, item.owner_id),
+                self.can_shop(actor_id, item.owner_id),
                 self._now(),
             ),
         )
@@ -152,7 +221,7 @@ class DjangoStore:
         updated = self._mutate(
             item_id,
             lambda item: prepare_unclaim(
-                item, actor_id, self._is_partner(actor_id, item.owner_id)
+                item, actor_id, self.can_shop(actor_id, item.owner_id)
             ),
         )
         return to_shopper_view(updated)
@@ -163,7 +232,7 @@ class DjangoStore:
             lambda item: prepare_give(
                 item,
                 actor_id,
-                self._is_partner(actor_id, item.owner_id),
+                self.can_shop(actor_id, item.owner_id),
                 self._now(),
             ),
         )
@@ -189,11 +258,10 @@ class DjangoStore:
         return to_owner_view(updated)
 
     def shopper_item(self, actor_id: int, item_id: int) -> ShopperItemView:
-        """One item on the partner's list. Anything else is ``NotFound``."""
+        """One item on a list this actor can shop. Anything else is ``NotFound``."""
 
-        owner_id = self.partner_id(actor_id)
         row = self._require_item_row(item_id)
-        if row.owner_id != owner_id:
+        if not self.can_shop(actor_id, row.owner_id):
             raise NotFound()
         return to_shopper_view(domain_item(row))
 
@@ -202,8 +270,15 @@ class DjangoStore:
         rows = Item.objects.filter(owner_id=actor_id).order_by("created_at", "id")
         return [to_owner_view(domain_item(row)) for row in rows]
 
-    def shopper_items(self, actor_id: int) -> list[ShopperItemView]:
-        owner_id = self.partner_id(actor_id)
+    def shopper_items(
+        self, actor_id: int, owner_id: int | None = None
+    ) -> list[ShopperItemView]:
+        """A list this actor can shop. Omit ``owner_id`` when there is exactly one."""
+
+        if owner_id is None:
+            owner_id = self.partner_id(actor_id)
+        elif not self.can_shop(actor_id, owner_id):
+            raise NotFound()
         rows = Item.objects.filter(owner_id=owner_id).order_by("created_at", "id")
         return [to_shopper_view(domain_item(row)) for row in rows]
 
@@ -224,10 +299,32 @@ class DjangoStore:
     def next_partner_important_date(
         self, viewer_id: int, on: date
     ) -> UpcomingDate | None:
-        """Soonest upcoming date for the partner, via ``Connection``."""
+        """Soonest upcoming date among people this viewer is connected to."""
 
-        partner = self.partner_id(viewer_id)
-        records = [
+        partners = self.partner_ids(viewer_id)
+        if not partners:
+            raise NotFound()
+        return soonest_upcoming(self._date_records(partners), on)
+
+    def next_important_date(self, person_id: int, on: date) -> UpcomingDate | None:
+        """Soonest upcoming date for one person. The caller already chose them."""
+
+        self._require_person(person_id)
+        return soonest_upcoming(self._date_records([person_id]), on)
+
+    def home_badges(self, viewer_id: int, on: date) -> HomeBadges:
+        """Owner Home payload. No connection means no date badge."""
+
+        upcoming = None
+        if self.partner_ids(viewer_id):
+            upcoming = self.next_partner_important_date(viewer_id, on)
+        return HomeBadges(
+            needs_you=self.needs_reaction_count(viewer_id),
+            upcoming=upcoming,
+        )
+
+    def _date_records(self, person_ids: list[int]) -> list[DomainImportantDate]:
+        return [
             DomainImportantDate(
                 person_id=row.person_id,
                 label=row.label,
@@ -235,20 +332,10 @@ class DjangoStore:
                 day=row.day,
                 year=row.year,
             )
-            for row in ImportantDate.objects.filter(person_id=partner).order_by("id")
+            for row in ImportantDate.objects.filter(person_id__in=person_ids).order_by(
+                "id"
+            )
         ]
-        return soonest_upcoming(records, on)
-
-    def home_badges(self, viewer_id: int, on: date) -> HomeBadges:
-        """Owner Home payload. No partner means no date badge."""
-
-        upcoming = None
-        if self._partner_id_or_none(viewer_id) is not None:
-            upcoming = self.next_partner_important_date(viewer_id, on)
-        return HomeBadges(
-            needs_you=self.needs_reaction_count(viewer_id),
-            upcoming=upcoming,
-        )
 
     def _require_person(self, person_id: int) -> Person:
         try:
@@ -281,17 +368,6 @@ class DjangoStore:
             if Item.objects.filter(pk=row.pk, **read).update(**changes) == 1:
                 return updated
         raise Invalid()
-
-    def _partner_id_or_none(self, person_id: int) -> int | None:
-        conn = (
-            Connection.objects.filter(person_a_id=person_id).first()
-            or Connection.objects.filter(person_b_id=person_id).first()
-        )
-        if conn is None:
-            return None
-        if conn.person_a_id == person_id:
-            return conn.person_b_id
-        return conn.person_a_id
 
     def _is_partner(self, person_id: int, other_id: int) -> bool:
         if person_id == other_id:

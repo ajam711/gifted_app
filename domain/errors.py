@@ -75,7 +75,7 @@ class Invalid(DomainError):
 # these never reach the owner.
 ConflictReason = Literal[
     "yours",  # you already claimed it
-    "claimed",  # someone else claimed it (only possible once there are groups)
+    "claimed",  # someone else already claimed it
     "not_claimed",  # unclaim / give on an item you have not claimed
     "not_liked",  # owner has not reacted yet
     "disliked",  # owner said no

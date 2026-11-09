@@ -1,7 +1,8 @@
 """Django settings for the gift app.
 
 Auth is session cookies on ``django.contrib.auth.User``. The gift-domain
-``Person`` row is a OneToOne, not a second password store.
+``Person.user`` is a nullable one-to-one link to that user, not a second
+password store. Null means no login.
 
 Local development needs no environment variables. Production (Railway)
 sets ``DJANGO_DEBUG=0``, ``DJANGO_SECRET_KEY``, ``DJANGO_ALLOWED_HOSTS``
