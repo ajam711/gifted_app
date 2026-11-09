@@ -2,7 +2,7 @@
   <h3>{{ item.name }}</h3>
   {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
   {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
-  {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
+  {% if item.url %}<p class="meta"><a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">Open link</a></p>{% endif %}
   {% if item.giver_note %}<p class="note">{{ item.giver_note }}</p>{% endif %}
   {% if item.claim_released_at and item.received_at and not item.given_at %}
     <p class="notice">{{ partner.name }} got this from someone else after you claimed it, so your claim was released.</p>
