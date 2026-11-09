@@ -64,8 +64,8 @@ def two_people() -> tuple[InMemoryStore, Person, Person]:
     """Ada (id 1) and Bea (id 2), connected. Time is ``NOW``."""
 
     store = InMemoryStore(now=lambda: NOW)
-    ada = store.add_person("Ada", "ada@example.com")
-    bea = store.add_person("Bea", "bea@example.com")
+    ada = store.add_person("Ada", "ada@example.com", user_id=1001)
+    bea = store.add_person("Bea", "bea@example.com", user_id=1002)
     store.connect(ada.id, bea.id)
     return store, ada, bea
 

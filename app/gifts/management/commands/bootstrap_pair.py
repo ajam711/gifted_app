@@ -46,8 +46,6 @@ class Command(BaseCommand):
         if people[0]["username"] == people[1]["username"]:
             raise CommandError("The two people need different usernames.")
 
-        self._refuse_other_pair({p["username"] for p in people})
-
         for person in people:
             if not person["password"]:
                 person["password"] = self._ask_password(person["username"])
@@ -67,21 +65,6 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Log in as {first.user.username} or {second.user.username}."
         )
-
-    def _refuse_other_pair(self, usernames: set[str]) -> None:
-        existing = Connection.objects.select_related(
-            "person_a__user", "person_b__user"
-        ).first()
-        if existing is None:
-            return
-        connected = {existing.person_a.user.username, existing.person_b.user.username}
-        if connected != usernames:
-            raise CommandError(
-                "A pair is already connected ("
-                + " and ".join(sorted(connected))
-                + "). V1 allows exactly one pair. To rename someone, edit "
-                "Person.name and User.first_name in Django admin."
-            )
 
     def _ask_password(self, username: str) -> str:
         while True:

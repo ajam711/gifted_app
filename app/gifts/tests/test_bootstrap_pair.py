@@ -76,12 +76,20 @@ class BootstrapPairTests(TestCase):
         )
         self.assertEqual(Connection.objects.count(), 1)
 
-    def test_refuses_a_different_pair(self) -> None:
+    def test_another_pair_is_its_own_connection(self) -> None:
+        """Connection is one row per pair, not a single pair for the app."""
+
         run(*pair_args())
-        with self.assertRaisesMessage(CommandError, "exactly one pair"):
-            run(*pair_args(second_username="lee", second_name="Lee"))
-        self.assertFalse(User.objects.filter(username="lee").exists())
-        self.assertEqual(Connection.objects.count(), 1)
+        run(
+            *pair_args(
+                second_username="lee",
+                second_name="Lee",
+                second_email="lee@example.com",
+            )
+        )
+        self.assertTrue(User.objects.filter(username="lee").exists())
+        self.assertEqual(Person.objects.count(), 3)
+        self.assertEqual(Connection.objects.count(), 2)
 
     def test_refuses_the_same_username_twice(self) -> None:
         with self.assertRaisesMessage(CommandError, "different usernames"):

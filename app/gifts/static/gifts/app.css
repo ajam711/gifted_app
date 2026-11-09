@@ -157,6 +157,15 @@ button:focus-visible {
   padding: 0;
 }
 
+.keep {
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+.keep h2 { font-size: 1.2rem; }
+.keep .add-item { margin-top: 0.75rem; }
+
 .doors {
   display: grid;
   gap: 0.85rem;

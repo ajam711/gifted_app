@@ -6,27 +6,34 @@ Auth lives on ``django.contrib.auth.User``; ``Person`` has no password.
 """
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import F, Q
 
 
 class Person(models.Model):
-    """Someone who can own a list and shop the other list."""
+    """Someone who can own a list. ``user`` null means no login.
+
+    A login can be linked later by setting ``user``. That is an update
+    of this nullable column, not a data migration.
+    """
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="person",
+        null=True,
+        blank=True,
     )
     name = models.CharField(max_length=100)
-    email = models.EmailField()
+    email = models.EmailField(blank=True)
 
     def __str__(self) -> str:
         return self.name
 
 
 class Connection(models.Model):
-    """Exactly one pair. Every "other person" lookup goes through here."""
+    """One row per pair. Every partner lookup goes through here."""
 
     person_a = models.ForeignKey(
         Person, on_delete=models.CASCADE, related_name="+"
@@ -47,6 +54,32 @@ class Connection(models.Model):
                 name="connection_unique_pair",
             ),
         ]
+
+    def clean(self):
+        super().clean()
+        self._one_keeper_for_someone_without_a_login()
+
+    def save(self, *args, **kwargs):
+        self._one_keeper_for_someone_without_a_login()
+        super().save(*args, **kwargs)
+
+    def _one_keeper_for_someone_without_a_login(self) -> None:
+        """A person with no login has one connection: their keeper."""
+
+        if self.person_a_id is None or self.person_b_id is None:
+            return
+        for person in Person.objects.filter(
+            id__in=[self.person_a_id, self.person_b_id], user__isnull=True
+        ):
+            existing = Connection.objects.filter(
+                Q(person_a_id=person.id) | Q(person_b_id=person.id)
+            )
+            if self.pk:
+                existing = existing.exclude(pk=self.pk)
+            if existing.exists():
+                raise ValidationError(
+                    "Someone who isn't on the app can have only one connection."
+                )
 
     def __str__(self) -> str:
         return f"{self.person_a} — {self.person_b}"

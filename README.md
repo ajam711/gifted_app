@@ -1,12 +1,12 @@
 # Gifted
 
-Private two-person web app: shared standing lists, owner reactions, partner claims, and a given-item history so gifts are not repeated. Either person can add to either list. The list owner must never observe claims on their own items — not in the UI, not in payloads, not in counts, not in response size.
+Private web app for two connected people, who can also keep a private list for someone who isn't on the app. Shared standing lists, owner reactions, partner claims, and a given-item history so gifts are not repeated. Either person on the app can add to their own list or to a list they can shop. The list owner must never observe claims on their own items — not in the UI, not in payloads, not in counts, not in response size.
 
 Product contract: [V1.md](V1.md). Read that before writing code.
 
 ## Status
 
-Domain layer is in `domain/` (dataclasses, in-memory store, tests). The Django app is in `app/`: session login, Home doors and badges, My list / Their list, Add item, owner react and "got it elsewhere", partner claim / unclaim / give (a confirmed hand-over that moves the gift to the owner's Received list), against SQLite. Deploys to Railway (below). Home badges are "N need you" (suggestions waiting on your list) and the partner's next important date ("Birthday in 12 days").
+Domain layer is in `domain/` (dataclasses, in-memory store, tests). The Django app is in `app/`: session login, Home doors and badges, My list / Their list, Add item, owner react and "got it elsewhere", partner claim / unclaim / give (a confirmed hand-over that moves the gift to the owner's Received list), against SQLite. A person on the app can also keep a private list for someone with no login — gifts they give that person, and gifts they got from them, which are recorded on the keeper's own list. Deploys to Railway (below). Home badges are "N need you" (suggestions waiting on your list) and the next important date of someone they are connected to ("Birthday in 12 days").
 
 ## Setup
 
@@ -22,7 +22,7 @@ python3 -m venv .venv
 .venv/bin/python app/manage.py runserver
 ```
 
-Use the two real people's details. The command prompts for each password; `--first-password` / `--second-password` skip the prompt (handy for scripts, but they end up in shell history). Re-running with the same two usernames updates names, emails and passwords. V1 allows exactly one pair, so a different pair is refused once one is connected.
+Use the two real people's details. The command prompts for each password; `--first-password` / `--second-password` skip the prompt (handy for scripts, but they end up in shell history). Re-running with the same two usernames updates names, emails and passwords. It connects that pair and leaves any other connection in place, including a list kept for someone who isn't on the app.
 
 To rename someone later, edit `Person.name` (what the other person sees) and `User.first_name` in Django admin at `/admin/`. Admin needs a staff account: `.venv/bin/python app/manage.py createsuperuser`.
 
@@ -89,7 +89,7 @@ Rejected for V1: FastAPI (later rewrite if the goal is API-first Python), React 
 
 ## Do not add
 
-- Groups, more than two people, Secret Santa
+- Groups, Secret Santa
 - In-app checkout or payments (outbound links only)
 - React / Vue / Svelte SPA
 - Go backend

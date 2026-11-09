@@ -10,14 +10,32 @@
         <span class="badge">{{ badges.needs_you }} need you</span>
       {% endif %}
     </a>
-    {% if partner %}
-      <a class="door" href="{% url 'their_list' %}">
-        <span class="door-kicker">Their list</span>
-        <span class="door-name">{{ partner.name }}</span>
-        {% if badges.upcoming %}
-          <span class="badge">{{ badges.upcoming.label }} in {{ badges.upcoming.days }} days</span>
+    {% for door in shop_doors %}
+      <a class="door" href="{{ door.url }}">
+        <span class="door-kicker">{% if door.person.user_id %}Their list{% else %}List for{% endif %}</span>
+        <span class="door-name">{{ door.person.name }}</span>
+        {% if door.upcoming %}
+          <span class="badge">{{ door.upcoming.label }} in {{ door.upcoming.days }} days</span>
         {% endif %}
       </a>
-    {% endif %}
+    {% endfor %}
   </nav>
+  <section class="keep">
+    <h2>Someone who isn't on the app</h2>
+    <p class="help">A private list only you can see. Track gifts you give them, and gifts you get from them.</p>
+    <form method="post" action="{% url 'keep_person' %}" class="add-item">
+      {% csrf_token %}
+      <div class="field">
+        <label for="{{ keep_form.name.id_for_label }}">Name</label>
+        {{ keep_form.name }}
+        {{ keep_form.name.errors }}
+      </div>
+      <div class="field">
+        <label for="{{ keep_form.email.id_for_label }}">Email <span class="optional">(optional)</span></label>
+        {{ keep_form.email }}
+        {{ keep_form.email.errors }}
+      </div>
+      <button class="button" type="submit">Keep a list</button>
+    </form>
+  </section>
 {% endblock %}
