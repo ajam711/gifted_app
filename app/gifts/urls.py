@@ -38,4 +38,5 @@ urlpatterns = [
         "their-list/<int:item_id>/unclaim/", views.unclaim_item, name="unclaim_item"
     ),
     path("their-list/<int:item_id>/give/", views.give_item, name="give_item"),
+    path("their-list/<int:item_id>/delete/", views.delete_item, name="delete_item"),
 ]

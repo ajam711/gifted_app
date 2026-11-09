@@ -174,6 +174,59 @@ class KeptListTests(DomainTestCase):
         self.assertEqual(upcoming.days, 2)
 
 
+class KeeperDeleteTests(DomainTestCase):
+    def test_keeper_deletes_items_on_a_no_login_list(self) -> None:
+        store, ada, _bea = two_people()
+        grandma = store.keep_person(ada.id, "Grandma")
+        open_item = store.add_item(ada.id, grandma.id, "Scarf")
+        claimed = store.add_item(ada.id, grandma.id, "Hat")
+        store.claim(ada.id, claimed.id)
+        before = owner_payload(
+            [item for item in store.owner_items(grandma.id) if item.id == open_item.id]
+        )
+        store.delete(ada.id, open_item.id)
+        store.delete(ada.id, claimed.id)
+        self.assertEqual(store.shopper_items(ada.id, grandma.id), [])
+        self.assertEqual(store.owner_items(grandma.id), [])
+        self.assertNotIn("claimed", before)
+
+    def test_keeper_cannot_delete_from_a_login_owners_list(self) -> None:
+        store, ada, bea = two_people()
+        store.keep_person(ada.id, "Grandma")
+        view = store.add_item(bea.id, bea.id, "Lamp")
+        with self.assertRaises(Invalid) as ctx:
+            store.delete(ada.id, view.id)
+        self.assertEqual(str(ctx.exception), "Invalid")
+        self.assert_silent(ctx.exception)
+        self.assertEqual(len(store.owner_items(bea.id)), 1)
+
+    def test_stranger_cannot_delete_a_login_owners_item(self) -> None:
+        store, ada, _bea = two_people()
+        cal = store.add_person("Cal", "cal@example.com", user_id=1003)
+        view = store.add_item(ada.id, ada.id, "Record")
+        with self.assertRaises(Invalid) as ctx:
+            store.delete(cal.id, view.id)
+        self.assertEqual(str(ctx.exception), "Invalid")
+        self.assert_silent(ctx.exception)
+        self.assertEqual(len(store.owner_items(ada.id)), 1)
+
+    def test_other_shopper_cannot_delete_a_login_owners_item(self) -> None:
+        store, ada, bea = two_people()
+        cal = store.add_person("Cal", "cal@example.com", user_id=1003)
+        store.connect(ada.id, cal.id)
+        view = store.add_item(ada.id, ada.id, "Record")
+        store.claim(bea.id, view.id)
+        for actor in (bea, cal):
+            with self.subTest(actor=actor.name):
+                with self.assertRaises(Invalid) as ctx:
+                    store.delete(actor.id, view.id)
+                self.assertEqual(str(ctx.exception), "Invalid")
+                self.assert_silent(ctx.exception)
+        self.assertEqual(store.shopper_item(bea.id, view.id).claimed_by_id, bea.id)
+        owner = asdict(store.owner_item(ada.id, view.id))
+        self.assertTrue(SHOPPER_ONLY_FIELDS.isdisjoint(owner))
+
+
 class StrangerDeniedTests(DomainTestCase):
     """Every action refuses someone with no Connection. The keeper's list too."""
 
