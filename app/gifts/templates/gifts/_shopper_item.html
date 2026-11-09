@@ -1,6 +1,7 @@
+{% load money %}
 <article class="item{% if item.id == highlight %} item-flash{% endif %}" id="item-{{ item.id }}">
   <h3>{{ item.name }}</h3>
-  {% if item.price_text %}<p class="meta">{{ item.price_text }}</p>{% endif %}
+  {% if item.price_text %}<p class="meta">{{ item.price_text|dollars }}</p>{% endif %}
   {% if item.tag %}<p class="meta">{{ item.tag }}</p>{% endif %}
   {% if item.url %}<p class="meta"><a href="{{ item.url }}" rel="noopener noreferrer">Open link</a></p>{% endif %}
   {% if item.giver_note %}<p class="note">{{ item.giver_note }}</p>{% endif %}

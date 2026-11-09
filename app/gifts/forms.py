@@ -43,7 +43,10 @@ class AddItemForm(forms.Form):
         max_length=100,
         required=False,
         label="Price",
-        widget=forms.TextInput(attrs={"placeholder": "around $120"}),
+        help_text="US dollars",
+        widget=forms.TextInput(
+            attrs={"placeholder": "24.99", "autocomplete": "off"}
+        ),
     )
     tag = forms.CharField(
         max_length=100,
