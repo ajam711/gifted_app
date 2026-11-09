@@ -5,6 +5,11 @@ from gifts import views
 urlpatterns = [
     path("", views.home, name="home"),
     path("lists/keep/", views.keep_person, name="keep_person"),
+    path(
+        "people/<int:person_id>/rename/",
+        views.rename_person,
+        name="rename_person",
+    ),
     path("lists/<int:owner_id>/", views.their_list, name="shop_list"),
     path(
         "lists/<int:owner_id>/add/",

@@ -49,6 +49,7 @@ OWNER_VIEW_FIELDS = {
     "received_at",
     "received_from_id",
     "received_from",
+    "received_from_person_id",
 }
 
 SHOPPER_ONLY_FIELDS = {

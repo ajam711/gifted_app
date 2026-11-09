@@ -14,6 +14,8 @@ from domain import (
     NotFound,
     OwnerItemView,
     ShopperItemView,
+    gift_recorded_from,
+    recorded_name_is_unique,
 )
 
 from gifts.auth import person_required
@@ -152,6 +154,10 @@ def my_list(request):
             "disliked": disliked,
             "received": received,
             "giver_names": _names(item.received_from_id for item in received),
+            "person_names": _names(
+                item.received_from_person_id for item in received
+            ),
+            "can_rename_self": store.can_rename(request.person.id, request.person.id),
         },
     )
 
@@ -259,14 +265,12 @@ def their_list(request, owner_id: int | None = None):
     groups = _grouped_shopper_items(
         store.shopper_items(request.person.id, owner_id), request.person.id
     )
-    from_them: list[OwnerItemView] = []
-    if partner.user_id is None:
-        from_them = [
-            item
-            for item in store.owner_items(request.person.id)
-            if item.received_at is not None and item.received_from == partner.name
-        ]
-        from_them.sort(key=lambda item: item.received_at, reverse=True)
+    kept_names = list(
+        Person.objects.filter(
+            id__in=store.partner_ids(request.person.id), user__isnull=True
+        ).values_list("name", flat=True)
+    )
+    from_them = _gifts_from(store, request.person.id, partner, kept_names)
     # ``?item=<id>`` after a claim / unclaim / give: briefly highlight that card.
     highlight = request.GET.get("item", "")
     return render(
@@ -281,10 +285,42 @@ def their_list(request, owner_id: int | None = None):
                 item.claimed_by_id for group in groups.values() for item in group
             ),
             "from_them": from_them,
+            "can_rename": store.can_rename(request.person.id, owner_id),
+            "person_names": _names(
+                item.received_from_person_id
+                for item in (
+                    *from_them,
+                    *(item for group in groups.values() for item in group),
+                )
+            ),
             "add_url": reverse("add_shop_item", args=[owner_id]),
             **groups,
         },
     )
+
+
+def _gifts_from(
+    store: DjangoStore,
+    actor_id: int,
+    partner: Person,
+    kept_names: list[str],
+) -> list[OwnerItemView]:
+    """Gifts the keeper got from this person.
+
+    Linked gifts follow the person. Unlinked text matches only when it
+    equals the current name and that name is not shared.
+    """
+
+    if partner.user_id is not None:
+        return []
+    unique = recorded_name_is_unique(kept_names, partner.name)
+    gifts = [
+        item
+        for item in store.owner_items(actor_id)
+        if gift_recorded_from(item, partner.id, partner.name, name_is_unique=unique)
+    ]
+    gifts.sort(key=lambda item: item.received_at, reverse=True)
+    return gifts
 
 
 # Shopper-only refusal messages. Only the partner can reach these (the
@@ -437,7 +473,11 @@ def record_gift_from(request, owner_id: int):
             saved = store.add_item(
                 request.person.id, request.person.id, **form.item_kwargs()
             )
-            store.receive(request.person.id, saved.id, person.name)
+            # Snapshot the name as written, and link this person so a
+            # later rename can show both without guessing by text.
+            store.receive(
+                request.person.id, saved.id, person.name, person.id
+            )
     except (Invalid, Forbidden):
         messages.error(request, "Could not save that.")
         return redirect(back)
@@ -445,3 +485,43 @@ def record_gift_from(request, owner_id: int):
         raise Http404("Not found") from None
     messages.success(request, f"Saved {saved.name} as a gift from {person.name}.")
     return redirect(back)
+
+
+@person_required
+@require_POST
+def rename_person(request, person_id: int):
+    """Rename someone the actor keeps a list for, or the actor themselves.
+
+    A stranger cannot tell the person exists (404). Another shopper, who
+    can open the list, is refused (403). Gift rows are not rewritten.
+    """
+
+    store = DjangoStore()
+    actor_id = request.person.id
+    try:
+        target = Person.objects.get(pk=person_id)
+    except Person.DoesNotExist:
+        raise Http404("Not found") from None
+    is_self = target.id == actor_id
+    if not is_self and not store.can_shop(actor_id, target.id):
+        raise Http404("Not found")
+    try:
+        saved = store.rename_person(actor_id, target.id, request.POST.get("name") or "")
+    except Invalid as error:
+        message = str(error)
+        if message == "Invalid":
+            message = "Could not save that."
+        messages.error(request, message)
+        return _rename_redirect(store, actor_id, target)
+    except Forbidden:
+        return HttpResponseForbidden("Not allowed")
+    except NotFound:
+        raise Http404("Not found") from None
+    messages.success(request, f"Renamed to {saved.name}.")
+    return _rename_redirect(store, actor_id, saved)
+
+
+def _rename_redirect(store: DjangoStore, actor_id: int, person: Person):
+    if person.id == actor_id:
+        return redirect("my_list")
+    return redirect(_shop_location(store, actor_id, person.id))

@@ -27,6 +27,16 @@ class Person(models.Model):
     )
     name = models.CharField(max_length=100)
     email = models.EmailField(blank=True)
+    # Set when someone starts a list for this person. Null on people who
+    # already use the app, so a partner is not treated as a keeper.
+    # SET_NULL: removing the keeper does not delete this person.
+    kept_by = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kept_people",
+    )
 
     def __str__(self) -> str:
         return self.name
@@ -144,7 +154,18 @@ class Item(models.Model):
     given_at = models.DateTimeField(null=True, blank=True)
     claim_released_at = models.DateTimeField(null=True, blank=True)
     received_at = models.DateTimeField(null=True, blank=True)
+    # Name as written. A rename does not update this column.
     received_from = models.CharField(max_length=100, null=True, blank=True)
+    # Set only when the gift is recorded from a specific person's list.
+    # Null on existing rows and on free text. Not backfilled by name.
+    # SET_NULL keeps the recorded name if that person is removed.
+    received_from_person = models.ForeignKey(
+        Person,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
     created_at = models.DateTimeField()
 
     class Meta:

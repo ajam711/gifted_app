@@ -1,0 +1,7 @@
+<form method="post" action="{% url 'rename_person' person_id %}" class="rename">
+  {% csrf_token %}
+  <label for="{{ field_id }}">{{ label }}</label>
+  <input id="{{ field_id }}" name="name" value="{{ current_name }}" maxlength="100" required autocomplete="off">
+  <button class="button button-quiet" type="submit">Rename</button>
+  {% if help %}<p class="help">{{ help }}</p>{% endif %}
+</form>

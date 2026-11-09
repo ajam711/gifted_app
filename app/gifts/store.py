@@ -17,6 +17,8 @@ state, never a mix of two requests.
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 
+from django.contrib.auth import get_user_model
+
 from domain import (
     Forbidden,
     HomeBadges,
@@ -26,6 +28,7 @@ from domain import (
     OwnerItemView,
     ShopperItemView,
     UpcomingDate,
+    can_rename_person,
     can_shop_pair,
     needs_reaction,
     prepare_claim,
@@ -55,6 +58,7 @@ _STATE_COLUMNS = (
     "claim_released_at",
     "received_at",
     "received_from",
+    "received_from_person_id",
 )
 _MAX_ATTEMPTS = 3
 
@@ -83,6 +87,7 @@ def domain_item(row: Item) -> DomainItem:
         claim_released_at=row.claim_released_at,
         received_at=row.received_at,
         received_from=row.received_from,
+        received_from_person_id=row.received_from_person_id,
         created_at=row.created_at,
     )
 
@@ -140,7 +145,9 @@ class DjangoStore:
             raise Invalid("Name is required")
         if len(cleaned) > PERSON_NAME_MAX_LENGTH:
             raise Invalid()
-        person = Person.objects.create(name=cleaned, email=email.strip(), user=None)
+        person = Person.objects.create(
+            name=cleaned, email=email.strip(), user=None, kept_by=actor
+        )
         low, high = (actor, person) if actor.id < person.id else (person, actor)
         Connection.objects.create(
             person_a=low, person_b=high, created_at=self._now()
@@ -157,6 +164,47 @@ class DjangoStore:
             raise Invalid()
         person.user_id = user_id
         person.save(update_fields=["user"])
+        return person
+
+    def can_rename(self, actor_id: int, person_id: int) -> bool:
+        """See ``can_rename_person``. Missing people are ``NotFound``."""
+
+        actor = self._require_person(actor_id)
+        person = self._require_person(person_id)
+        shops = False
+        if actor.id != person.id:
+            shops = self.can_shop(actor.id, person.id)
+        return can_rename_person(
+            actor_id=actor.id,
+            person_id=person.id,
+            actor_has_login=actor.user_id is not None,
+            person_has_login=person.user_id is not None,
+            kept_by_id=person.kept_by_id,
+            actor_can_shop=shops,
+        )
+
+    def rename_person(self, actor_id: int, person_id: int, name: str) -> Person:
+        """Change a display name. Does not read or write any gift.
+
+        When this person has a login, ``User.first_name`` is updated too,
+        so admin stays in step with the name the app shows. Gift rows,
+        including ``received_from``, are left as recorded.
+        """
+
+        if not self.can_rename(actor_id, person_id):
+            raise Forbidden()
+        cleaned = name.strip()
+        if not cleaned:
+            raise Invalid("Name is required")
+        if len(cleaned) > PERSON_NAME_MAX_LENGTH:
+            raise Invalid("Name is too long")
+        person = self._require_person(person_id)
+        person.name = cleaned
+        person.save(update_fields=["name"])
+        if person.user_id is not None:
+            get_user_model().objects.filter(pk=person.user_id).update(
+                first_name=cleaned
+            )
         return person
 
     def add_item(
@@ -239,14 +287,32 @@ class DjangoStore:
         return to_shopper_view(updated)
 
     def receive(
-        self, actor_id: int, item_id: int, received_from: str | None = None
+        self,
+        actor_id: int,
+        item_id: int,
+        received_from: str | None = None,
+        received_from_person_id: int | None = None,
     ) -> OwnerItemView:
-        """Owner got it from someone else. Same response, claimed or not."""
+        """Owner got it from someone else. Same response, claimed or not.
 
-        updated = self._mutate(
-            item_id,
-            lambda item: prepare_receive(item, actor_id, received_from, self._now()),
-        )
+        ``received_from_person_id`` links a person the actor can shop.
+        Free text is not matched to anyone.
+        """
+
+        def rule(item):
+            if item.owner_id == actor_id and received_from_person_id is not None:
+                self._require_person(received_from_person_id)
+                if not self.can_shop(actor_id, received_from_person_id):
+                    raise Forbidden()
+            return prepare_receive(
+                item,
+                actor_id,
+                received_from,
+                self._now(),
+                received_from_person_id=received_from_person_id,
+            )
+
+        updated = self._mutate(item_id, rule)
         return to_owner_view(updated)
 
     def unreceive(self, actor_id: int, item_id: int) -> OwnerItemView:

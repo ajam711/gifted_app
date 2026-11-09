@@ -6,6 +6,9 @@
     <h1>Your list</h1>
     <a class="button" href="{% url 'add_my_item' %}">Add item</a>
   </div>
+  {% if can_rename_self %}
+    {% include "gifts/_rename_person.html" with person_id=person.id field_id="rename-me" label="Your name" current_name=person.name help="This is the name other people see. Gifts already recorded keep the earlier name." %}
+  {% endif %}
   {% if pending or liked or disliked or received %}
     {% if pending %}
       <section class="item-group" aria-labelledby="pending-heading">

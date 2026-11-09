@@ -57,6 +57,10 @@ class OwnerItemView:
     received_at: datetime | None
     received_from_id: int | None
     received_from: str | None
+    # Who the gift was recorded from, when the keeper linked a person.
+    # Not the hand-over giver (``received_from_id``). Null if the name
+    # was only typed. Rename does not fill this in.
+    received_from_person_id: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +88,7 @@ class ShopperItemView:
     claim_released_at: datetime | None
     received_at: datetime | None
     received_from: str | None
+    received_from_person_id: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +181,7 @@ def to_owner_view(item: Item) -> OwnerItemView:
         # The giver is revealed at hand-over and not before.
         received_from_id=item.claimed_by_id if item.given_at is not None else None,
         received_from=item.received_from,
+        received_from_person_id=item.received_from_person_id,
     )
 
 
@@ -198,7 +204,62 @@ def to_shopper_view(item: Item) -> ShopperItemView:
         claim_released_at=item.claim_released_at,
         received_at=item.received_at,
         received_from=item.received_from,
+        received_from_person_id=item.received_from_person_id,
     )
+
+
+def received_from_label(recorded: str | None, current_name: str | None) -> str:
+    """How to show who a gift came from.
+
+    ``recorded`` is the text stored on the gift. Rename never changes
+    it. ``current_name`` is the linked person's name now, or ``None``
+    when the gift is not linked. A different current name is shown
+    beside the recorded one (``Sam (now Samantha)``). Unlinked text is
+    returned as stored: a name is not matched to a person, because two
+    people can share one.
+    """
+
+    if not current_name:
+        return recorded or ""
+    if recorded and recorded != current_name:
+        return f"{recorded} (now {current_name})"
+    return current_name
+
+
+def recorded_name_is_unique(names: Iterable[str], name: str) -> bool:
+    """True when exactly one entry in ``names`` equals ``name``.
+
+    Zero or several means an unlinked ``received_from`` string cannot
+    be shown under one person without guessing.
+    """
+
+    return sum(1 for other in names if other == name) == 1
+
+
+def gift_recorded_from(
+    item: OwnerItemView,
+    person_id: int,
+    person_name: str,
+    *,
+    name_is_unique: bool,
+) -> bool:
+    """Whether a received gift is listed under that person's "Gifts from".
+
+    A link wins. The gift follows that person across a rename, and two
+    people who share a name stay apart. Unlinked text is the name as
+    recorded. It matches this person only when the text equals their
+    current name and no other person shares that name. Rename does not
+    rewrite the text, so an old unlinked ``Sam`` does not become
+    ``Samantha``.
+    """
+
+    if item.received_at is None:
+        return False
+    if item.received_from_person_id is not None:
+        return item.received_from_person_id == person_id
+    if not name_is_unique:
+        return False
+    return bool(item.received_from) and item.received_from == person_name
 
 
 def occurrence_on_or_after(month: int, day: int, year: int | None, on: date) -> date | None:
