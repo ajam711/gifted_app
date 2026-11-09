@@ -223,6 +223,20 @@ button:focus-visible {
   color: inherit;
 }
 
+.money-input {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.money-sign { color: var(--muted); }
+
+.add-item .money-input input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
 .add-item input[name="name"] { font-size: 1.2rem; }
 
 .help { display: block; font-size: 0.9rem; margin-top: 0.25rem; }

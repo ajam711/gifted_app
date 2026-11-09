@@ -18,7 +18,11 @@
     </div>
     <div class="field">
       <label for="{{ form.price_text.id_for_label }}">Price <span class="optional">optional</span></label>
-      {{ form.price_text }}
+      <div class="money-input">
+        <span class="money-sign" aria-hidden="true">$</span>
+        {{ form.price_text }}
+      </div>
+      {% if form.price_text.help_text %}<span class="help">{{ form.price_text.help_text }}</span>{% endif %}
       {{ form.price_text.errors }}
     </div>
     <div class="field">
