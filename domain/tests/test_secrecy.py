@@ -81,6 +81,24 @@ class SecrecyTests(DomainTestCase):
         listed[claimed_item.id].pop("id")
         self.assertEqual(listed[open_item.id], listed[claimed_item.id])
 
+    def test_linked_receive_looks_the_same_claimed_or_not(self) -> None:
+        """Linking a person does not tell the owner the item was claimed."""
+
+        store, ada, bea = two_people()
+        grandma = store.keep_person(ada.id, "Grandma")
+        open_item = store.add_item(ada.id, ada.id, "A")
+        claimed_item = store.add_item(ada.id, ada.id, "A")
+        store.claim(bea.id, claimed_item.id)
+        a = asdict(store.receive(ada.id, open_item.id, "Grandma", grandma.id))
+        b = asdict(store.receive(ada.id, claimed_item.id, "Grandma", grandma.id))
+        a.pop("id")
+        b.pop("id")
+        self.assertEqual(a, b)
+        self.assertEqual(b["received_from_person_id"], grandma.id)
+        self.assertEqual(b["received_from"], "Grandma")
+        self.assertIsNone(b["received_from_id"])
+        self.assertTrue(SHOPPER_ONLY_FIELDS.isdisjoint(b))
+
     def test_receive_refusals_are_silent(self) -> None:
         store, ada, bea = two_people()
         given_item = store.add_item(ada.id, ada.id, "Given")

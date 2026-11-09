@@ -32,21 +32,27 @@ class Person:
     not a second gift-domain user table. No ``password_hash`` here.
 
     ``user_id is None`` means this person is not on the app. The keeper
-    of their list is the one logged-in person connected to them. A login
-    can be linked later by setting ``user_id``; that is an update, not
-    a schema change.
+    of their list is the one logged-in person connected to them, and
+    ``kept_by_id`` records who that is. A login can be linked later by
+    setting ``user_id``; that is an update, not a schema change.
+    ``kept_by_id`` stays, so the keeper can still be told apart from
+    other shoppers once several people can shop the list.
 
     Attributes:
         id: Stable identifier. Assigned by the store.
-        name: Display name.
+        name: Display name. A rename changes this and nothing on an item.
         email: Contact. May be empty when there is no login.
         user_id: Nullable one-to-one link to an auth user.
+        kept_by_id: Who keeps this person's list. Null when they were
+            not created as someone off the app — the two people who
+            both have logins are not each other's keeper.
     """
 
     id: int
     name: str
     email: str
     user_id: int | None = None
+    kept_by_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +144,15 @@ class Item:
             elsewhere". Owner-visible; this is the hand-over reveal.
         received_from: Optional free-text giver the owner typed for a
             gift received elsewhere (``"Grandma"``). Owner-visible.
+            This is the name as it was written. Renaming a person does
+            not change it.
+        received_from_person_id: Optional link to the person the gift
+            was recorded from. Set only by recording it from that
+            person's list, never by matching ``received_from`` text, so
+            two people who share a name stay apart. Null on older rows
+            and on a free-text "got it elsewhere". Owner-visible.
+            Distinct from the hand-over giver, which is ``claimed_by_id``
+            once ``given_at`` is set.
         created_at: Insert time.
     """
 
@@ -157,4 +172,5 @@ class Item:
     claim_released_at: datetime | None
     received_at: datetime | None
     received_from: str | None
+    received_from_person_id: int | None
     created_at: datetime

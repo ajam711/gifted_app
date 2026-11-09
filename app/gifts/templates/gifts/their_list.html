@@ -1,4 +1,5 @@
 {% extends "gifts/base.html" %}
+{% load gift_tags %}
 {% block title %}{{ partner.name }}'s list · Gifted{% endblock %}
 {% block content %}
   <p class="crumb"><a href="{% url 'home' %}">Home</a></p>
@@ -6,6 +7,9 @@
     <h1>{{ partner.name }}'s list</h1>
     <a class="button" href="{{ add_url }}">Add item</a>
   </div>
+  {% if can_rename %}
+    {% include "gifts/_rename_person.html" with person_id=partner.id field_id="rename-kept" label="Name" current_name=partner.name help="Gifts you already recorded keep the name from when you wrote them down. One tied to this person shows the old name beside the new one." %}
+  {% endif %}
   {% if has_items %}
     {% if yours %}
       <section class="item-group" aria-labelledby="yours-heading">
@@ -102,7 +106,7 @@
             <li>
               <article class="item">
                 <h3>{{ item.name }}</h3>
-                <p class="meta">From {{ partner.name }} · {{ item.received_at|date:"j M Y" }}</p>
+                <p class="meta">{% with label=item|received_from_label:person_names %}{% if label %}From {{ label }} · {% endif %}{% endwith %}{{ item.received_at|date:"j M Y" }}</p>
               </article>
             </li>
           {% endfor %}

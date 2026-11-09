@@ -94,6 +94,7 @@ class DjangoStoreKeptListTests(TestCase):
             ("give", lambda: self.store.give(cal.id, item.id), Forbidden),
             ("receive", lambda: self.store.receive(cal.id, item.id, "X"), Forbidden),
             ("unreceive", lambda: self.store.unreceive(cal.id, item.id), Forbidden),
+            ("rename", lambda: self.store.rename_person(cal.id, self.ada.id, "Nope"), Forbidden),
         ]
         for name, action, error in denied:
             with self.subTest(action=name):
@@ -101,6 +102,8 @@ class DjangoStoreKeptListTests(TestCase):
                     action()
         row = Item.objects.get(pk=item.id)
         self.assertEqual(row.claimed_by_id, self.bea.id)
+        self.ada.refresh_from_db()
+        self.assertEqual(self.ada.name, "Ada")
 
     def test_link_login_hides_the_note_and_the_open_claim(self) -> None:
         grandma = self.store.keep_person(self.ada.id, "Grandma")
@@ -125,8 +128,10 @@ class DjangoStoreKeptListTests(TestCase):
         added = self.store.add_item(self.ada.id, self.ada.id, "Teacup")
         received = self.store.receive(self.ada.id, added.id, grandma.name)
         self.assertEqual(received.received_from, "Grandma")
+        self.assertIsNone(received.received_from_person_id)
         row = Item.objects.get(pk=added.id)
         self.assertEqual(row.owner_id, self.ada.id)
+        self.assertIsNone(row.received_from_person_id)
         self.assertEqual(Item.objects.count(), 1)
 
 
@@ -220,6 +225,7 @@ class KeptListHTTPTests(TestCase):
         item = Item.objects.get(name="Teacup")
         self.assertEqual(item.owner_id, self.ada.id)
         self.assertEqual(item.received_from, "Grandma")
+        self.assertEqual(item.received_from_person_id, grandma.id)
         self.assertIsNotNone(item.received_at)
         self.assertIsNone(item.given_at)
         mine = self.keeper.get("/my-list/")

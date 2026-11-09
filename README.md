@@ -24,7 +24,7 @@ python3 -m venv .venv
 
 Use the two real people's details. The command prompts for each password; `--first-password` / `--second-password` skip the prompt (handy for scripts, but they end up in shell history). Re-running with the same two usernames updates names, emails and passwords. It connects that pair and leaves any other connection in place, including a list kept for someone who isn't on the app.
 
-To rename someone later, edit `Person.name` (what the other person sees) and `User.first_name` in Django admin at `/admin/`. Admin needs a staff account: `.venv/bin/python app/manage.py createsuperuser`.
+A keeper renames someone they keep a list for on that person's list. Someone with a login renames themselves on My list. Either change updates `Person.name` only. Gifts already recorded keep the name that was written down; a gift tied to that person shows the old name beside the new one (`Sam (now Samantha)`). When the person has a login, `User.first_name` is updated too. Admin at `/admin/` can still edit a name. Admin needs a staff account: `.venv/bin/python app/manage.py createsuperuser`.
 
 Log in with either username. Add-item URLs are `/my-list/add/` and `/their-list/add/` — the list is the screen you opened, not a picker.
 

@@ -61,6 +61,36 @@ def can_shop_pair(
     return True
 
 
+def can_rename_person(
+    *,
+    actor_id: int,
+    person_id: int,
+    actor_has_login: bool,
+    person_has_login: bool,
+    kept_by_id: int | None,
+    actor_can_shop: bool,
+) -> bool:
+    """Who may change this person's display name.
+
+    The person themselves, when they have a login: the actor is the
+    owner (``actor_id == person_id``). Or the keeper. ``can_shop`` is
+    enough while they have no login, because that list has one shopper.
+    After a login is linked, other shoppers also pass ``can_shop``, and
+    only ``kept_by_id == actor_id`` is the keeper. A stranger fails
+    ``can_shop`` and is not the owner.
+    """
+
+    if not actor_has_login:
+        return False
+    if actor_id == person_id:
+        return person_has_login
+    if not actor_can_shop:
+        return False
+    if not person_has_login:
+        return True
+    return kept_by_id == actor_id
+
+
 def prepare_new_item(
     actor_id: int,
     owner_id: int,
@@ -101,6 +131,7 @@ def prepare_new_item(
         "claim_released_at": None,
         "received_at": None,
         "received_from": None,
+        "received_from_person_id": None,
         "created_at": now,
     }
 
@@ -226,7 +257,11 @@ def prepare_give(
 
 
 def prepare_receive(
-    item: Item, actor_id: int, received_from: str | None, now: datetime
+    item: Item,
+    actor_id: int,
+    received_from: str | None,
+    now: datetime,
+    received_from_person_id: int | None = None,
 ) -> Item:
     """Replacement row after the owner records a gift received elsewhere.
 
@@ -234,6 +269,11 @@ def prepare_receive(
     Otherwise it succeeds whether or not the item is claimed, and the
     owner's view of the result is the same either way. A claim is
     released with ``claim_released_at`` so the shopper is told.
+
+    ``received_from`` is the name as written. ``received_from_person_id``
+    is set only when the caller names a person. This does not look the
+    text up, so two people who share a name are not linked by accident.
+    The store checks ``can_shop`` before passing an id in.
     """
 
     if item.owner_id != actor_id:
@@ -243,7 +283,12 @@ def prepare_receive(
     giver = (received_from or "").strip() or None
     if giver is not None and len(giver) > RECEIVED_FROM_MAX_LENGTH:
         raise Invalid("Name is too long")
-    updated = replace(item, received_at=now, received_from=giver)
+    updated = replace(
+        item,
+        received_at=now,
+        received_from=giver,
+        received_from_person_id=received_from_person_id,
+    )
     if item.claimed_by_id is not None:
         return replace(
             updated, claimed_by_id=None, claimed_at=None, claim_released_at=now
@@ -262,7 +307,11 @@ def prepare_unreceive(item: Item, actor_id: int) -> Item:
     if item.received_at is None or item.given_at is not None:
         raise Invalid()
     return replace(
-        item, received_at=None, received_from=None, claim_released_at=None
+        item,
+        received_at=None,
+        received_from=None,
+        received_from_person_id=None,
+        claim_released_at=None,
     )
 
 
@@ -325,6 +374,8 @@ class InMemoryStore:
             raise Invalid()
         email = email.strip()
         person = self.add_person(cleaned, email, user_id=None)
+        person = replace(person, kept_by_id=actor_id)
+        self._people[person.id] = person
         self.connect(actor_id, person.id)
         return person
 
@@ -346,6 +397,42 @@ class InMemoryStore:
         updated = replace(person, user_id=user_id)
         self._people[person.id] = updated
         return updated
+
+    def can_rename(self, actor_id: int, person_id: int) -> bool:
+        """See ``can_rename_person``. Missing people are ``NotFound``."""
+
+        actor = self._require_person(actor_id)
+        person = self._require_person(person_id)
+        shops = False
+        if actor.id != person.id:
+            shops = self.can_shop(actor.id, person.id)
+        return can_rename_person(
+            actor_id=actor.id,
+            person_id=person.id,
+            actor_has_login=actor.user_id is not None,
+            person_has_login=person.user_id is not None,
+            kept_by_id=person.kept_by_id,
+            actor_can_shop=shops,
+        )
+
+    def rename_person(self, actor_id: int, person_id: int, name: str) -> Person:
+        """Change a display name. Does not read or write any item.
+
+        ``received_from`` on older gifts stays the name that was written
+        down. The keeper, or this person once they have a login, may
+        call this. A stranger and any other shopper get ``Forbidden``.
+        """
+
+        if not self.can_rename(actor_id, person_id):
+            raise Forbidden()
+        cleaned = name.strip()
+        if not cleaned:
+            raise Invalid("Name is required")
+        if len(cleaned) > PERSON_NAME_MAX_LENGTH:
+            raise Invalid("Name is too long")
+        person = replace(self._require_person(person_id), name=cleaned)
+        self._people[person.id] = person
+        return person
 
     def connect(self, person_id: int, other_id: int) -> Connection:
         """Record one pair, ordered so ``person_a_id < person_b_id``.
@@ -572,12 +659,31 @@ class InMemoryStore:
         return to_shopper_view(updated)
 
     def receive(
-        self, actor_id: int, item_id: int, received_from: str | None = None
+        self,
+        actor_id: int,
+        item_id: int,
+        received_from: str | None = None,
+        received_from_person_id: int | None = None,
     ) -> OwnerItemView:
-        """Owner got it from someone else. Same response, claimed or not."""
+        """Owner got it from someone else. Same response, claimed or not.
+
+        Pass ``received_from_person_id`` only to link a specific person
+        the actor can shop. Omitting it leaves the gift as free text.
+        The text is never matched to a person.
+        """
 
         item = self._require_item(item_id)
-        updated = prepare_receive(item, actor_id, received_from, self._now())
+        if item.owner_id == actor_id and received_from_person_id is not None:
+            self._require_person(received_from_person_id)
+            if not self.can_shop(actor_id, received_from_person_id):
+                raise Forbidden()
+        updated = prepare_receive(
+            item,
+            actor_id,
+            received_from,
+            self._now(),
+            received_from_person_id=received_from_person_id,
+        )
         self._items[updated.id] = updated
         return to_owner_view(updated)
 

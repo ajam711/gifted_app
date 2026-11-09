@@ -20,6 +20,7 @@ class KeptListTests(DomainTestCase):
         self.assertEqual(grandma.name, "Grandma")
         self.assertEqual(grandma.email, "")
         self.assertEqual(store.partner_ids(grandma.id), [ada.id])
+        self.assertEqual(grandma.kept_by_id, ada.id)
         self.assertIn(grandma.id, store.partner_ids(ada.id))
         self.assertTrue(store.can_shop(ada.id, grandma.id))
         self.assertFalse(store.can_shop(grandma.id, ada.id))
@@ -105,11 +106,14 @@ class KeptListTests(DomainTestCase):
         store, ada, _bea = two_people()
         grandma = store.keep_person(ada.id, "Grandma")
         added = store.add_item(ada.id, ada.id, "Teacup")
-        received = store.receive(ada.id, added.id, "Grandma")
+        received = store.receive(ada.id, added.id, "Grandma", grandma.id)
         self.assertEqual(received.received_from, "Grandma")
+        self.assertEqual(received.received_from_person_id, grandma.id)
         self.assertIsNone(received.received_from_id)
+        typed = store.add_item(ada.id, ada.id, "Spoon")
+        self.assertIsNone(store.receive(ada.id, typed.id, "Grandma").received_from_person_id)
         self.assertEqual(store._items[added.id].owner_id, ada.id)
-        self.assertEqual(len(store._items), 1)
+        self.assertEqual(len(store._items), 2)
         self.assertNotIn(added.id, {item.id for item in store.shopper_items(ada.id, grandma.id)})
 
     def test_linking_a_login_hides_open_claims_and_giver_notes(self) -> None:
@@ -192,6 +196,7 @@ class StrangerDeniedTests(DomainTestCase):
             ("receive", lambda: store.receive(cal.id, item.id, "X"), Forbidden),
             ("unreceive", lambda: store.unreceive(cal.id, item.id), Forbidden),
             ("delete", lambda: store.delete(cal.id, item.id), Invalid),
+            ("rename", lambda: store.rename_person(cal.id, ada.id, "Nope"), Forbidden),
         ]
         for name, action, error in denied:
             with self.subTest(action=name):
@@ -199,6 +204,7 @@ class StrangerDeniedTests(DomainTestCase):
                     action()
                 self.assert_silent(ctx.exception)
         self.assertEqual(store._items[item.id].claimed_by_id, bea.id)
+        self.assertEqual(store._people[ada.id].name, "Ada")
         with self.assertRaises(NotFound):
             store.shopper_item(cal.id, item.id)
         with self.assertRaises(NotFound):
@@ -219,6 +225,7 @@ class StrangerDeniedTests(DomainTestCase):
             ("receive", lambda: store.receive(bea.id, item.id, "X"), Forbidden),
             ("unreceive", lambda: store.unreceive(bea.id, item.id), Forbidden),
             ("delete", lambda: store.delete(bea.id, item.id), Invalid),
+            ("rename", lambda: store.rename_person(bea.id, grandma.id, "Nope"), Forbidden),
         ]
         for name, action, error in denied:
             with self.subTest(action=name):
@@ -227,6 +234,7 @@ class StrangerDeniedTests(DomainTestCase):
                 self.assert_silent(ctx.exception)
         self.assertEqual(store._items[item.id].name, "Scarf")
         self.assertEqual(store._items[item.id].claimed_by_id, ada.id)
+        self.assertEqual(store._people[grandma.id].name, "Grandma")
         with self.assertRaises(NotFound):
             store.shopper_item(bea.id, item.id)
         with self.assertRaises(NotFound):

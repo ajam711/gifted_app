@@ -52,6 +52,6 @@
   {% elif actions == "given" %}
     <p class="meta">Given {{ item.given_at|date:"j M Y" }}</p>
   {% elif actions == "elsewhere" %}
-    <p class="meta">{% if item.received_from %}From {{ item.received_from }} · {% endif %}{{ item.received_at|date:"j M Y" }}</p>
+    <p class="meta">{% if item.received_from or item.received_from_person_id %}{% with label=item|received_from_label:person_names %}{% if label %}From {{ label }} · {% endif %}{% endwith %}{% endif %}{{ item.received_at|date:"j M Y" }}</p>
   {% endif %}
 </article>
