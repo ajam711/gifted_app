@@ -54,4 +54,20 @@
   {% elif actions == "elsewhere" %}
     <p class="meta">{% if item.received_from %}From {{ item.received_from }} · {% endif %}{{ item.received_at|date:"j M Y" }}</p>
   {% endif %}
+  {% if not partner.user_id %}
+    <div class="react-actions">
+      <details class="confirm">
+        <summary class="button button-quiet">Delete</summary>
+        <form method="post" action="{% url 'delete_item' item.id %}" class="confirm-body"
+              hx-post="{% url 'delete_item' item.id %}"
+              hx-target="main"
+              hx-select="main"
+              hx-swap="outerHTML">
+          {% csrf_token %}
+          <p>Remove {{ item.name }} from this list? This cannot be undone.</p>
+          <button type="submit" class="button">Delete</button>
+        </form>
+      </details>
+    </div>
+  {% endif %}
 </article>

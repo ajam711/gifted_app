@@ -12,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.test import Client, TestCase
 from django.utils import timezone as dj_timezone
 
-from domain import Forbidden, NotFound
+from domain import Forbidden, Invalid, NotFound
 
 from gifts.models import Connection, ImportantDate, Item, Person
 from gifts.store import DjangoStore
@@ -130,6 +130,57 @@ class DjangoStoreKeptListTests(TestCase):
         self.assertEqual(Item.objects.count(), 1)
 
 
+class DjangoStoreDeleteTests(TestCase):
+    def setUp(self) -> None:
+        self.ada, self.bea = two_people()
+        self.store = DjangoStore(now=lambda: NOW)
+
+    def test_keeper_deletes_a_kept_item_including_one_they_claimed(self) -> None:
+        grandma = self.store.keep_person(self.ada.id, "Grandma")
+        scarf = self.store.add_item(self.ada.id, grandma.id, "Scarf")
+        hat = self.store.add_item(self.ada.id, grandma.id, "Hat")
+        self.store.claim(self.ada.id, hat.id)
+        self.store.delete(self.ada.id, scarf.id)
+        self.store.delete(self.ada.id, hat.id)
+        self.assertFalse(Item.objects.filter(owner=grandma).exists())
+
+    def test_stranger_cannot_delete_a_login_owners_item(self) -> None:
+        cal_user = User.objects.create_user("cal", "cal@example.com", PASSWORD)
+        cal = Person.objects.create(
+            user=cal_user, name="Cal", email="cal@example.com"
+        )
+        item = self.store.add_item(self.ada.id, self.ada.id, "Record")
+        with self.assertRaises(Invalid):
+            self.store.delete(cal.id, item.id)
+        self.assertTrue(Item.objects.filter(pk=item.id).exists())
+
+    def test_other_shopper_cannot_delete_a_login_owners_item(self) -> None:
+        cal_user = User.objects.create_user("cal", "cal@example.com", PASSWORD)
+        cal = Person.objects.create(
+            user=cal_user, name="Cal", email="cal@example.com"
+        )
+        low, high = (self.ada, cal) if self.ada.id < cal.id else (cal, self.ada)
+        Connection.objects.create(person_a=low, person_b=high, created_at=NOW)
+        item = self.store.add_item(self.ada.id, self.ada.id, "Record")
+        self.store.claim(self.bea.id, item.id)
+        for actor in (self.bea, cal):
+            with self.subTest(actor=actor.name):
+                with self.assertRaises(Invalid):
+                    self.store.delete(actor.id, item.id)
+        row = Item.objects.get(pk=item.id)
+        self.assertEqual(row.claimed_by_id, self.bea.id)
+
+    def test_owner_with_a_login_still_deletes_their_own_item(self) -> None:
+        item = self.store.add_item(self.ada.id, self.ada.id, "Kettle")
+        self.store.delete(self.ada.id, item.id)
+        self.assertFalse(Item.objects.filter(pk=item.id).exists())
+        claimed = self.store.add_item(self.ada.id, self.ada.id, "Watch")
+        self.store.claim(self.bea.id, claimed.id)
+        with self.assertRaises(Invalid):
+            self.store.delete(self.ada.id, claimed.id)
+        self.assertTrue(Item.objects.filter(pk=claimed.id).exists())
+
+
 class KeptListHTTPTests(TestCase):
     def setUp(self) -> None:
         self.ada, self.bea = two_people()
@@ -226,6 +277,63 @@ class KeptListHTTPTests(TestCase):
         self.assertContains(mine, "Teacup")
         self.assertContains(mine, "From Grandma")
         self.assertEqual(Item.objects.count(), 1)
+
+    def test_keeper_delete_uses_a_confirm_step(self) -> None:
+        grandma = self._keep()
+        self.keeper.post(f"/lists/{grandma.id}/add/", {"name": "Scarf"})
+        item = Item.objects.get(name="Scarf")
+        page = self.keeper.get(f"/lists/{grandma.id}/")
+        self.assertContains(page, '<details class="confirm">')
+        self.assertContains(page, "Remove Scarf from this list?")
+        self.assertContains(page, f'action="/their-list/{item.id}/delete/"')
+        login_list = self.other.get("/their-list/")
+        self.assertNotContains(login_list, "/delete/")
+        self.keeper.post(f"/their-list/{item.id}/claim/")
+        claimed = self.keeper.get(f"/lists/{grandma.id}/")
+        self.assertContains(claimed, f'action="/their-list/{item.id}/delete/"')
+        deleted = self.keeper.post(f"/their-list/{item.id}/delete/", follow=True)
+        self.assertContains(deleted, "Deleted Scarf.")
+        self.assertFalse(Item.objects.filter(pk=item.id).exists())
+
+    def test_stranger_and_other_shopper_cannot_delete(self) -> None:
+        grandma = self._keep()
+        self.keeper.post(f"/lists/{grandma.id}/add/", {"name": "Scarf"})
+        kept = Item.objects.get(name="Scarf")
+        own = Item.objects.create(
+            owner=self.ada,
+            added_by=self.ada,
+            name="Kettle",
+            reaction="liked",
+            reacted_at=NOW,
+            created_at=NOW,
+        )
+        cal_user = User.objects.create_user("cal", "cal@example.com", PASSWORD)
+        cal_person = Person.objects.create(
+            user=cal_user, name="Cal", email="cal@example.com"
+        )
+        low, high = (
+            (self.ada, cal_person)
+            if self.ada.id < cal_person.id
+            else (cal_person, self.ada)
+        )
+        Connection.objects.create(person_a=low, person_b=high, created_at=NOW)
+        stranger = Client()
+        stranger_user = User.objects.create_user("dee", "dee@example.com", PASSWORD)
+        Person.objects.create(
+            user=stranger_user, name="Dee", email="dee@example.com"
+        )
+        stranger.login(username="dee", password=PASSWORD)
+        shopper = Client()
+        shopper.login(username="cal", password=PASSWORD)
+
+        for client in (stranger, shopper, self.other):
+            denied = client.post(f"/their-list/{own.id}/delete/", follow=True)
+            self.assertContains(denied, "Could not delete that.")
+            self.assertNotContains(denied, "claim")
+        self.assertTrue(Item.objects.filter(pk=own.id).exists())
+        kept_denied = self.other.post(f"/their-list/{kept.id}/delete/", follow=True)
+        self.assertContains(kept_denied, "Could not delete that.")
+        self.assertTrue(Item.objects.filter(pk=kept.id).exists())
 
     def test_stranger_cannot_claim(self) -> None:
         grandma = self._keep()

@@ -365,6 +365,35 @@ def give_item(request, item_id: int):
 
 
 @person_required
+@require_POST
+def delete_item(request, item_id: int):
+    """Keeper removes an item from a no-login person's list.
+
+    A login owner can also delete their own unclaimed item. Missing,
+    not allowed, and claimed-on-a-login-list all look the same.
+    """
+
+    store = DjangoStore()
+    row = (
+        Item.objects.filter(pk=item_id).only("id", "name", "owner_id").first()
+    )
+    if row is None:
+        messages.error(request, "Could not delete that.")
+        return redirect("home")
+    owner_id = row.owner_id
+    name = row.name
+    try:
+        store.delete(request.person.id, item_id)
+    except Invalid:
+        messages.error(request, "Could not delete that.")
+        return redirect("home")
+    messages.success(request, f"Deleted {name}.")
+    if owner_id == request.person.id:
+        return redirect("my_list")
+    return redirect(_shop_location(store, request.person.id, owner_id))
+
+
+@person_required
 def add_item(request, list_key: str, owner_id: int | None = None):
     """List identity is the URL this screen was opened from, not a picker."""
 

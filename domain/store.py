@@ -590,17 +590,31 @@ class InMemoryStore:
         return to_owner_view(updated)
 
     def delete(self, actor_id: int, item_id: int) -> None:
-        """Owner deletes an unclaimed item.
+        """Remove an item.
 
-        Missing, not owner, or ``claimed_by_id`` set all raise the same
-        ``Invalid()``. Branching into ``NotFound`` vs a "cannot delete"
-        message would let the owner distinguish "claimed" from "gone".
+        An owner with a login deletes their own unclaimed item. The
+        keeper of a list whose owner has no login deletes any item on
+        that list (``can_shop``). Everyone else is refused.
+
+        Missing, not allowed, or claimed on a login owner's list all
+        raise the same ``Invalid()``. A different message would let that
+        owner tell "claimed" from "gone".
         """
 
         item = self._items.get(item_id)
-        if item is None or item.owner_id != actor_id or item.claimed_by_id is not None:
+        if item is None or not self._may_delete(actor_id, item):
             raise Invalid()
         del self._items[item_id]
+
+    def _may_delete(self, actor_id: int, item: Item) -> bool:
+        owner = self._people.get(item.owner_id)
+        if owner is None:
+            return False
+        if owner.user_id is None:
+            if actor_id not in self._people:
+                return False
+            return self.can_shop(actor_id, owner.id)
+        return item.owner_id == actor_id and item.claimed_by_id is None
 
     def owner_items(self, actor_id: int) -> list[OwnerItemView]:
         """My list. Every row is projected; claimed items still appear, unchanged."""

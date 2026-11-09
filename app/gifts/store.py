@@ -257,6 +257,30 @@ class DjangoStore:
         )
         return to_owner_view(updated)
 
+    def delete(self, actor_id: int, item_id: int) -> None:
+        """Owner with a login, or the keeper of a no-login list.
+
+        Same ``Invalid()`` for missing, not allowed, and a claimed item
+        on a login owner's list, so that refusal does not reveal a claim.
+        """
+
+        try:
+            row = Item.objects.select_related("owner").get(pk=item_id)
+        except Item.DoesNotExist:
+            raise Invalid() from None
+        if not self._may_delete(actor_id, row):
+            raise Invalid()
+        row.delete()
+
+    def _may_delete(self, actor_id: int, row: Item) -> bool:
+        owner = row.owner
+        if owner.user_id is None:
+            try:
+                return self.can_shop(actor_id, owner.id)
+            except NotFound:
+                return False
+        return owner.id == actor_id and row.claimed_by_id is None
+
     def shopper_item(self, actor_id: int, item_id: int) -> ShopperItemView:
         """One item on a list this actor can shop. Anything else is ``NotFound``."""
 
